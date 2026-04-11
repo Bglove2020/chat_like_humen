@@ -13,6 +13,7 @@ import { HealthController } from './health.controller';
 import { ImpressionEdge } from './impressions/impression-edge.entity';
 import { ImpressionMessageLink } from './impressions/impression-message-link.entity';
 import { ChatSession } from './chat/chat_session.entity';
+import { UserProfile } from './users/user-profile.entity';
 
 const appEnv = process.env.NODE_ENV || 'development';
 
@@ -33,7 +34,7 @@ const appEnv = process.env.NODE_ENV || 'development';
         username: configService.get<string>('database.username'),
         password: configService.get<string>('database.password'),
         database: configService.get<string>('database.database'),
-        entities: [User, ChatMessage, ChatSession, ImpressionEdge, ImpressionMessageLink],
+        entities: [User, UserProfile, ChatMessage, ChatSession, ImpressionEdge, ImpressionMessageLink],
         synchronize: true,
         logging: false,
       }),

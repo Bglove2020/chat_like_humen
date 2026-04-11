@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ChatMessageService } from './chat_message.service';
 import { ChatMessage } from './chat_message.entity';
 import { ImpressionRecord, ImpressionsService } from '../impressions/impressions.service';
+import { UserProfileFields, UserProfilePreferenceContextItem, UserProfileService } from '../users/user-profile.service';
 
 type ContextSource = 'recent' | 'window' | 'latest';
 
@@ -20,6 +21,10 @@ export interface ChatContextResponse {
     points: string[];
     time: string;
   }>;
+  userProfile: {
+    structured: UserProfileFields;
+    preferences: UserProfilePreferenceContextItem[];
+  };
 }
 
 const DEFAULT_CONTEXT_LIMIT = 6;
@@ -53,6 +58,7 @@ export class ChatContextService {
   constructor(
     private chatMessageService: ChatMessageService,
     private impressionsService: ImpressionsService,
+    private userProfileService: UserProfileService,
   ) {}
 
   async getContext(userId: number, message: string, limit = DEFAULT_CONTEXT_LIMIT): Promise<ChatContextResponse> {
@@ -62,13 +68,23 @@ export class ChatContextService {
     const windowQuery = this.buildWindowQuery(historyMessages);
     const latestQuery = this.buildLatestQuery(latestHistoryMessages, message);
 
-    const [recentImpressions, windowRecall, latestRecall] = await Promise.all([
+    const [
+      recentImpressions,
+      windowRecall,
+      latestRecall,
+      structuredProfile,
+      preferenceProfile,
+    ] = await Promise.all([
       this.impressionsService.getRecentUserImpressions(userId, RECENT_IMPRESSION_LIMIT, 7),
       windowQuery
         ? this.impressionsService.searchUserImpressions(userId, windowQuery, SEARCH_LIMIT)
         : Promise.resolve([]),
       latestQuery
         ? this.impressionsService.searchUserImpressions(userId, latestQuery, SEARCH_LIMIT)
+        : Promise.resolve([]),
+      this.userProfileService.getStructuredProfile(userId),
+      latestQuery
+        ? this.userProfileService.searchPreferenceMemories(userId, latestQuery, 5)
         : Promise.resolve([]),
     ]);
 
@@ -85,6 +101,10 @@ export class ChatContextService {
         points: item.points,
         time: this.formatBeijingTime(item),
       })),
+      userProfile: {
+        structured: structuredProfile,
+        preferences: preferenceProfile,
+      },
     };
   }
 

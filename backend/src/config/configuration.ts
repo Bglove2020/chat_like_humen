@@ -30,6 +30,7 @@ export default () => ({
   qdrant: {
     url: process.env.QDRANT_URL || 'http://localhost:6333',
     collectionName: process.env.QDRANT_COLLECTION_NAME || 'user_impressions',
+    profileCollectionName: process.env.QDRANT_PROFILE_COLLECTION_NAME || 'user_profile_memories',
   },
 
   dashscope: {

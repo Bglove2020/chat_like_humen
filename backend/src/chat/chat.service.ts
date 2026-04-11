@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, OnModuleDestroy } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config';
 import http from 'http';
 import https from 'https';
-import { QueueService } from '../queue/queue.service';
+import { FactJobData, QueueService } from '../queue/queue.service';
 import { ChatMessageService } from './chat_message.service';
 import { ChatSessionService } from './chat_session.service';
 import { ChatSession } from './chat_session.entity';
@@ -235,7 +235,7 @@ export class ChatService implements OnModuleDestroy {
     );
 
     try {
-      await this.queueService.enqueueSummaryBatch(buffer.userId, buffer.sessionId, allMessages as any);
+      await this.enqueueFlushJobs(buffer.userId, buffer.sessionId, allMessages);
       console.log(`[Buffer] Flushed ${messages.length} messages for user ${buffer.userId}, session ${buffer.sessionId} (total with history: ${allMessages.length})`);
     } catch (error: any) {
       console.error('[Buffer] Failed to flush:', error?.message);
@@ -357,7 +357,39 @@ export class ChatService implements OnModuleDestroy {
     session.messages = [];
 
     const messages = await this.buildSummaryPayload(session.userId, session.sessionId, sessionMsgs);
-    await this.queueService.enqueueSummaryBatch(session.userId, session.sessionId, messages as any);
+    await this.enqueueFlushJobs(session.userId, session.sessionId, messages);
+  }
+
+  private extractFactMessages(messages: SummaryQueueMessage[]): FactJobData['messages'] {
+    return messages
+      .filter((message) => message.isNew !== false)
+      .filter((message) => message.role === 'user')
+      .map((message) => ({
+        messageId: message.messageId,
+        role: 'user' as const,
+        content: message.content,
+        timestamp: message.timestamp,
+      }))
+      .filter((message) => String(message.content || '').trim());
+  }
+
+  private async enqueueFlushJobs(
+    userId: number,
+    sessionId: string | undefined,
+    messages: SummaryQueueMessage[],
+  ): Promise<void> {
+    const summaryBatch = await this.queueService.enqueueSummaryBatch(userId, sessionId, messages);
+    const factMessages = this.extractFactMessages(messages);
+
+    if (!factMessages.length) {
+      return;
+    }
+
+    try {
+      await this.queueService.enqueueFactBatch(userId, summaryBatch.batchId, factMessages);
+    } catch (error: any) {
+      console.error('[Buffer] Failed to enqueue fact job:', error?.message);
+    }
   }
 
   private async buildSummaryPayload(

@@ -3,8 +3,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import configuration from './config/configuration';
 import { SummaryProcessor } from './processor/summary.processor';
+import { FactProcessor } from './processor/fact.processor';
 import { DashscopeService } from './services/dashscope.service';
 import { QdrantService } from './services/qdrant.service';
+import { FactExtractionService } from './services/fact-extraction.service';
+import { UserProfileMemoryService } from './services/user-profile-memory.service';
 
 const appEnv = process.env.NODE_ENV || 'development';
 
@@ -27,10 +30,22 @@ const appEnv = process.env.NODE_ENV || 'development';
         prefix: 'bull',
       }),
     }),
-    BullModule.registerQueue({
-      name: 'chat-summary-queue',
-    }),
+    BullModule.registerQueue(
+      {
+        name: 'chat-summary-queue',
+      },
+      {
+        name: 'chat-fact-queue',
+      },
+    ),
   ],
-  providers: [SummaryProcessor, DashscopeService, QdrantService],
+  providers: [
+    SummaryProcessor,
+    FactProcessor,
+    DashscopeService,
+    QdrantService,
+    FactExtractionService,
+    UserProfileMemoryService,
+  ],
 })
 export class AppModule {}

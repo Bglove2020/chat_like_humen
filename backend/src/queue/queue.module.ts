@@ -17,9 +17,14 @@ import { QueueService } from './queue.service';
         prefix: 'bull',
       }),
     }),
-    BullModule.registerQueue({
-      name: 'chat-summary-queue',
-    }),
+    BullModule.registerQueue(
+      {
+        name: 'chat-summary-queue',
+      },
+      {
+        name: 'chat-fact-queue',
+      },
+    ),
   ],
   providers: [QueueService],
   exports: [QueueService],
