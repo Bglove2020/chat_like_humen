@@ -1,0 +1,77 @@
+import { Injectable } from '@nestjs/common';
+import { ImpressionsService } from '../impressions/impressions.service';
+import { Mem0RestService } from './mem0-rest.service';
+
+const DEFAULT_LIMIT = 6;
+const MAX_LIMIT = 20;
+const BEIJING_TIME_FORMATTER = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
+@Injectable()
+export class MemoryCompareService {
+  constructor(
+    private impressionsService: ImpressionsService,
+    private mem0RestService: Mem0RestService,
+  ) {}
+
+  private normalizeLimit(limit?: number): number {
+    if (!Number.isInteger(limit)) {
+      return DEFAULT_LIMIT;
+    }
+
+    return Math.min(Math.max(limit || DEFAULT_LIMIT, 1), MAX_LIMIT);
+  }
+
+  private formatBeijingTime(value: string): string {
+    if (!value) {
+      return '';
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+
+    return BEIJING_TIME_FORMATTER.format(date).replace(',', '');
+  }
+
+  async search(userId: number, query: string, limit?: number) {
+    const normalizedLimit = this.normalizeLimit(limit);
+    const [customResult, mem0Result] = await Promise.allSettled([
+      this.impressionsService.searchUserImpressions(userId, query, normalizedLimit),
+      this.mem0RestService.search(userId, query, normalizedLimit),
+    ]);
+    const customImpressions = customResult.status === 'fulfilled' ? customResult.value : [];
+    const mem0Results = mem0Result.status === 'fulfilled' ? mem0Result.value : [];
+
+    if (customResult.status === 'rejected') {
+      console.error('[MemoryCompare] Custom search error:', customResult.reason?.message || customResult.reason);
+    }
+
+    if (mem0Result.status === 'rejected') {
+      console.error('[MemoryCompare] Mem0 search error:', mem0Result.reason?.message || mem0Result.reason);
+    }
+
+    return {
+      custom: {
+        context: customImpressions.map((item) => ({
+          scene: item.scene,
+          points: item.points,
+          time: this.formatBeijingTime(item.updatedAt || item.createdAt),
+          score: item.score,
+        })),
+      },
+      mem0: {
+        results: mem0Results,
+      },
+    };
+  }
+}

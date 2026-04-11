@@ -44,3 +44,8 @@ export const chatApi = {
   sendMessage: (message: string, sessionId?: string) =>
     client.post('/chat', { message, sessionId }),
 };
+
+export const memoryCompareApi = {
+  search: (userId: number, query: string, limit = 6) =>
+    client.post('/memory-compare/search', { userId, query, limit }),
+};

@@ -7,6 +7,7 @@ import { UsersModule } from './users/users.module';
 import { ChatModule } from './chat/chat.module';
 import { ImpressionsModule } from './impressions/impressions.module';
 import { QueueModule } from './queue/queue.module';
+import { MemoryCompareModule } from './memory-compare/memory-compare.module';
 import { User } from './users/user.entity';
 import { ChatMessage } from './chat/chat_message.entity';
 import { HealthController } from './health.controller';
@@ -44,6 +45,7 @@ const appEnv = process.env.NODE_ENV || 'development';
     ChatModule,
     ImpressionsModule,
     QueueModule,
+    MemoryCompareModule,
   ],
   controllers: [HealthController],
 })

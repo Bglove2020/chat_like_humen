@@ -381,14 +381,24 @@ export class ChatService implements OnModuleDestroy {
     const summaryBatch = await this.queueService.enqueueSummaryBatch(userId, sessionId, messages);
     const factMessages = this.extractFactMessages(messages);
 
-    if (!factMessages.length) {
-      return;
+    if (factMessages.length) {
+      try {
+        await this.queueService.enqueueFactBatch(userId, summaryBatch.batchId, factMessages);
+      } catch (error: any) {
+        console.error('[Buffer] Failed to enqueue fact job:', error?.message);
+      }
     }
 
     try {
-      await this.queueService.enqueueFactBatch(userId, summaryBatch.batchId, factMessages);
+      await this.queueService.enqueueMem0Batch(
+        userId,
+        sessionId,
+        messages,
+        summaryBatch.batchId,
+        summaryBatch.date,
+      );
     } catch (error: any) {
-      console.error('[Buffer] Failed to enqueue fact job:', error?.message);
+      console.error('[Buffer] Failed to enqueue Mem0 sidecar job:', error?.message);
     }
   }
 

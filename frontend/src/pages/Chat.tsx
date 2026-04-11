@@ -239,6 +239,9 @@ export default function Chat() {
             <MemoryIcon />
             Memories
           </button>
+          <button className="memory-button" onClick={() => navigate('/memory-compare')}>
+            Compare
+          </button>
           <button className="logout-button" onClick={handleLogout}>
             <LogoutIcon />
             Logout
