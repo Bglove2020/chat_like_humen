@@ -1,0 +1,108 @@
+{
+  "name": "bakery-cross-day-growth",
+  "description": "面包店计划先在同日更新，再跨日续写，要求 continued 正确承接。",
+  "userId": 920002,
+  "sessionId": "bakery-cross-day-growth",
+  "messages": [
+    { "id": 1, "role": "user", "content": "我想开一家小面包店。", "createdAt": "2026-04-07T09:00:00.000Z" },
+    { "id": 2, "role": "assistant", "content": "先把铺面、预算和设备想清楚最关键。", "createdAt": "2026-04-07T09:00:10.000Z" },
+    { "id": 3, "role": "user", "content": "我在犹豫开社区小店还是商场店，预算也紧，怕设备和现金流压垮我。", "createdAt": "2026-04-07T09:00:20.000Z" },
+    { "id": 4, "role": "assistant", "content": "那人手安排也要一起算进去。", "createdAt": "2026-04-07T09:00:30.000Z" },
+    { "id": 5, "role": "user", "content": "我爸妈愿意借我一笔启动钱，我还想卖早餐和下午茶，但不确定要不要先辞职。", "createdAt": "2026-04-07T11:00:00.000Z" },
+    { "id": 6, "role": "assistant", "content": "这会影响回本节奏和你能不能先做试营业。", "createdAt": "2026-04-07T11:00:10.000Z" },
+    { "id": 7, "role": "user", "content": "我还是想先从社区店做起，家里那笔钱只够基础装修和前期设备。", "createdAt": "2026-04-08T09:00:00.000Z" },
+    { "id": 8, "role": "assistant", "content": "那你就更得把现金流、早餐下午茶和辞职时间串起来看。", "createdAt": "2026-04-08T09:00:10.000Z" }
+  ],
+  "batches": [
+    {
+      "name": "bakery-day1-start",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [1, 2, 3, 4],
+      "newMessageIds": [1, 2, 3, 4],
+      "node1": {
+        "historyRetrievalDraft": "",
+        "deltaRetrievalDraft": "聊开面包店计划，这轮先确定主线是铺面选择、预算、设备、现金流和人手压力。",
+        "mergedRetrievalDraft": "聊开面包店计划，原来还没有旧主线，这轮先形成了铺面选择、预算、设备、现金流和人手压力这条创业主线。"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": null,
+            "scene": "聊开面包店计划",
+            "points": [
+              "用户在权衡社区小店还是商场店，先卡在铺面选择上。",
+              "预算紧，设备投入、现金流压力和人手安排被一起推到了台前。"
+            ],
+            "retrievalText": "聊开面包店计划时，用户先在社区小店和商场店之间犹豫，同时预算紧，设备、现金流和人手压力都压了上来。"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bakery-day1-growth",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [1, 2, 3, 4, 5, 6],
+      "newMessageIds": [5, 6],
+      "node1": {
+        "historyRetrievalDraft": "聊开面包店计划，之前已经卡在铺面选择、预算、设备、现金流和人手压力上。",
+        "deltaRetrievalDraft": "聊开面包店计划，这轮新增了父母借款、早餐下午茶方向和辞职时间的犹豫。",
+        "mergedRetrievalDraft": "聊开面包店计划，原来已经在权衡铺面、预算和人手，这轮又新增了父母借款、早餐下午茶方向以及辞职时间的安排。"
+      },
+      "retrievalExpectation": {
+        "top1Scene": "聊开面包店计划"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": "聊开面包店计划",
+            "scene": "聊开面包店计划",
+            "points": [
+              "用户在权衡社区小店还是商场店，先卡在铺面选择上。",
+              "预算紧，设备投入、现金流压力和人手安排被一起推到了台前。",
+              "家里愿意借一笔启动钱，用户还在盘算早餐和下午茶都做的话，要不要先辞职。"
+            ],
+            "retrievalText": "聊开面包店计划时，用户一边权衡社区小店还是商场店，一边担心预算、设备、现金流和人手压力。后来家里愿意借启动钱，用户又开始盘算早餐下午茶一起做时，要不要先辞职。"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bakery-day2-continued",
+      "memoryDate": "2026-04-08",
+      "windowMessageIds": [3, 4, 5, 6, 7, 8],
+      "newMessageIds": [7, 8],
+      "node1": {
+        "historyRetrievalDraft": "聊开面包店计划，之前已经明确过铺面、预算、设备、现金流、人手、父母借款、早餐下午茶和辞职时间。",
+        "deltaRetrievalDraft": "聊开面包店计划，这轮进一步收紧成社区店优先，家里那笔钱只够基础装修和前期设备。",
+        "mergedRetrievalDraft": "聊开面包店计划，原来已经在铺面、预算和辞职时间上反复权衡，这轮又把方向收紧到社区店优先，并明确家里那笔钱只够基础装修和前期设备。"
+      },
+      "retrievalExpectation": {
+        "top1Scene": "聊开面包店计划"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": "聊开面包店计划",
+            "scene": "聊开面包店计划",
+            "points": [
+              "用户在铺面上逐渐偏向社区店，不再那么想去商场店。",
+              "预算、设备、现金流和人手始终是一条线上的压力，家里那笔借款也只够基础装修和前期设备。",
+              "用户想把早餐和下午茶一起做起来，但辞职时间还得继续掂量。"
+            ],
+            "retrievalText": "聊开面包店计划时，用户后来逐渐偏向社区店。预算、设备、现金流和人手压力一直都在，家里愿意借的钱也只够基础装修和前期设备。与此同时，用户还想把早餐和下午茶一起做起来，只是辞职时间还没完全定下来。"
+          }
+        ]
+      }
+    }
+  ],
+  "golden_final": {
+    "latestScene": "聊开面包店计划",
+    "latestPoints": [
+      "用户在铺面上逐渐偏向社区店，不再那么想去商场店。",
+      "预算、设备、现金流和人手始终是一条线上的压力，家里那笔借款也只够基础装修和前期设备。",
+      "用户想把早餐和下午茶一起做起来，但辞职时间还得继续掂量。"
+    ],
+    "latestOriginType": "continued",
+    "totalImpressions": 2
+  }
+}

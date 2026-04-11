@@ -1,0 +1,49 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: emotion-agent-qdrant
+    restart: always
+    ports:
+      - "6333:6333" # HTTP API 和 Dashboard
+      - "6334:6334" # gRPC API
+    volumes:
+      - ./qdrant_storage:/qdrant/storage:z
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  redis:
+    image: redis:7-alpine  # 使用轻量级的 alpine 版本
+    container_name: emotion-agent-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    # 强烈建议设置密码，尤其是服务器有公网 IP 时
+    command: redis-server --requirepass zxr120713.
+    volumes:
+      - ./redis_data:/data  # 数据持久化，防止重启后队列任务丢失
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  mysql:
+    image: mysql:8.0  # 推荐使用 8.0 稳定版
+    container_name: emotion-agent-mysql
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: zxr120713.  # 替换为你的 Root 密码
+      MYSQL_DATABASE: agent_db                  # 启动时自动创建的数据库名
+      TZ: Asia/Shanghai                         # 设置时区，保证聊天记录时间准确
+    volumes:
+      - ./mysql_data:/var/lib/mysql:z
+    # 强制使用 utf8mb4 字符集，完美支持 Emoji 表情存储
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

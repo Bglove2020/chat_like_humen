@@ -1,0 +1,126 @@
+{
+  "name": "bakery-running-interleaved",
+  "description": "同一用户交错聊面包店和马拉松，要求双场景分离召回、分离落库。",
+  "userId": 920003,
+  "sessionId": "bakery-running-interleaved",
+  "messages": [
+    { "id": 1, "role": "user", "content": "我还是想开一家面包店。", "createdAt": "2026-04-07T10:00:00.000Z" },
+    { "id": 2, "role": "assistant", "content": "先看铺面和预算。", "createdAt": "2026-04-07T10:00:10.000Z" },
+    { "id": 3, "role": "user", "content": "我最近在练马拉松，右膝也有点不舒服。", "createdAt": "2026-04-07T10:05:00.000Z" },
+    { "id": 4, "role": "assistant", "content": "那训练量和配速都要小心。", "createdAt": "2026-04-07T10:05:10.000Z" },
+    { "id": 5, "role": "user", "content": "面包店这边我更偏向社区店，早餐和下午茶都想做。", "createdAt": "2026-04-07T10:10:00.000Z" },
+    { "id": 6, "role": "assistant", "content": "那就得把设备和现金流算细。", "createdAt": "2026-04-07T10:10:10.000Z" },
+    { "id": 7, "role": "user", "content": "跑步这边我一提速膝盖就顶不住，怕影响后面备赛。", "createdAt": "2026-04-07T10:15:00.000Z" },
+    { "id": 8, "role": "assistant", "content": "那你这条训练线得先稳住膝盖。", "createdAt": "2026-04-07T10:15:10.000Z" }
+  ],
+  "batches": [
+    {
+      "name": "interleaved-bakery-start",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [1, 2],
+      "newMessageIds": [1, 2],
+      "node1": {
+        "historyRetrievalDraft": "",
+        "deltaRetrievalDraft": "聊开面包店计划，这轮先落在铺面和预算上。",
+        "mergedRetrievalDraft": "聊开面包店计划，原来还没有旧主线，这轮先形成了铺面和预算这条创业主线。"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": null,
+            "scene": "聊开面包店计划",
+            "points": [
+              "用户还在起步阶段，先把面包店的铺面和预算放在前面想。"
+            ],
+            "retrievalText": "聊开面包店计划时，用户先把铺面和预算摆到了最前面。"
+          }
+        ]
+      }
+    },
+    {
+      "name": "interleaved-running-start",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [1, 2, 3, 4],
+      "newMessageIds": [3, 4],
+      "node1": {
+        "historyRetrievalDraft": "聊开面包店计划，之前已经提过铺面和预算。",
+        "deltaRetrievalDraft": "聊马拉松训练和膝盖问题，这轮新开了一条线：用户在练马拉松，右膝不舒服，训练量和配速都要小心。",
+        "mergedRetrievalDraft": "先前在聊开面包店计划，但这轮明显切到了另一条独立主线：聊马拉松训练和膝盖问题，用户右膝不舒服，训练量和配速都得小心。"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": null,
+            "scene": "聊马拉松训练和膝盖问题",
+            "points": [
+              "用户最近在练马拉松，但右膝已经开始不舒服。",
+              "训练量和配速怎么拿捏，成了这条线上的核心顾虑。"
+            ],
+            "retrievalText": "聊马拉松训练和膝盖问题时，用户一边备赛一边发现右膝不舒服，所以训练量和配速都得重新拿捏。"
+          }
+        ]
+      }
+    },
+    {
+      "name": "interleaved-bakery-return",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [1, 2, 3, 4, 5, 6],
+      "newMessageIds": [5, 6],
+      "node1": {
+        "historyRetrievalDraft": "聊开面包店计划，之前已经提过铺面和预算。",
+        "deltaRetrievalDraft": "聊开面包店计划，这轮把方向收紧到社区店，并补进了早餐下午茶、设备和现金流。",
+        "mergedRetrievalDraft": "原来在聊开面包店计划，这轮又把方向收紧到社区店，还补进了早餐下午茶、设备和现金流。"
+      },
+      "retrievalExpectation": {
+        "top1Scene": "聊开面包店计划"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": "聊开面包店计划",
+            "scene": "聊开面包店计划",
+            "points": [
+              "用户逐渐偏向社区店来开面包店。",
+              "早餐和下午茶都想做起来，设备和现金流要一起压着算。"
+            ],
+            "retrievalText": "聊开面包店计划时，用户后来逐渐偏向社区店，同时还想把早餐和下午茶一起做起来，所以设备和现金流都得一起算细。"
+          }
+        ]
+      }
+    },
+    {
+      "name": "interleaved-running-return",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [3, 4, 5, 6, 7, 8],
+      "newMessageIds": [7, 8],
+      "node1": {
+        "historyRetrievalDraft": "聊马拉松训练和膝盖问题，之前已经提过用户在备赛时右膝不舒服，训练量和配速都要小心。",
+        "deltaRetrievalDraft": "聊马拉松训练和膝盖问题，这轮进一步说清了用户一提速膝盖就顶不住，担心影响后面备赛。",
+        "mergedRetrievalDraft": "原来在聊马拉松训练和膝盖问题，这轮又新增了一个更具体的风险：用户一提速膝盖就顶不住，怕影响后面备赛。"
+      },
+      "retrievalExpectation": {
+        "top1Scene": "聊马拉松训练和膝盖问题"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": "聊马拉松训练和膝盖问题",
+            "scene": "聊马拉松训练和膝盖问题",
+            "points": [
+              "用户最近在练马拉松，但右膝已经开始不舒服。",
+              "只要一提速膝盖就顶不住，用户担心这样会影响后面的备赛节奏。"
+            ],
+            "retrievalText": "聊马拉松训练和膝盖问题时，用户一边备赛一边发现右膝不舒服，而且一提速膝盖就顶不住，已经开始担心会影响后面的训练节奏。"
+          }
+        ]
+      }
+    }
+  ],
+  "golden_final": {
+    "scenes": [
+      "聊开面包店计划",
+      "聊马拉松训练和膝盖问题"
+    ],
+    "totalImpressions": 2
+  }
+}

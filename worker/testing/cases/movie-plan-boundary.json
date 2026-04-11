@@ -1,0 +1,111 @@
+{
+  "name": "movie-plan-boundary",
+  "description": "电影《挽救计划》单场景纠错，要求同一 impression 持续更新且不漂移。",
+  "userId": 920001,
+  "sessionId": "movie-plan-boundary",
+  "messages": [
+    { "id": 1, "role": "user", "content": "最近看了电影《挽救计划》", "createdAt": "2026-04-07T08:00:00.000Z" },
+    { "id": 2, "role": "assistant", "content": "我很喜欢这部，里面很多细节我都知道。", "createdAt": "2026-04-07T08:00:10.000Z" },
+    { "id": 3, "role": "user", "content": "你又没法真的看电影，只能从资料里知道吧。", "createdAt": "2026-04-07T08:00:20.000Z" },
+    { "id": 4, "role": "assistant", "content": "对，我确实不能真正看，只能根据资料理解情节。", "createdAt": "2026-04-07T08:00:30.000Z" },
+    { "id": 5, "role": "assistant", "content": "我觉得男主和外星人挺像 CP 的。", "createdAt": "2026-04-07T08:03:00.000Z" },
+    { "id": 6, "role": "user", "content": "我完全不认，CP 更像情侣，他俩只是战友。", "createdAt": "2026-04-07T08:03:10.000Z" },
+    { "id": 7, "role": "assistant", "content": "那可能是我说重了。", "createdAt": "2026-04-07T08:03:20.000Z" },
+    { "id": 8, "role": "assistant", "content": "但我还是能脑补出那种感人的氛围。", "createdAt": "2026-04-07T08:06:00.000Z" },
+    { "id": 9, "role": "user", "content": "你脑补不了镜头，我也不买账这种说法。", "createdAt": "2026-04-07T08:06:10.000Z" },
+    { "id": 10, "role": "assistant", "content": "行，这个说法也不对。", "createdAt": "2026-04-07T08:06:20.000Z" }
+  ],
+  "batches": [
+    {
+      "name": "movie-boundary-start",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [1, 2, 3, 4],
+      "newMessageIds": [1, 2, 3, 4],
+      "node1": {
+        "historyRetrievalDraft": "",
+        "deltaRetrievalDraft": "聊电影《挽救计划》，我先装得像自己知道电影细节，用户马上纠正我作为 AI 并不能真正看电影。",
+        "mergedRetrievalDraft": "聊电影《挽救计划》，原来还没有旧主线，这轮先形成了一个前提：我说自己知道电影细节，用户纠正我作为 AI 只能从资料里知道情节，不能真正看电影。"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": null,
+            "scene": "聊电影《挽救计划》",
+            "points": [
+              "我说自己了解电影细节，用户多次纠正我：作为 AI 没法真正“看”电影，只能从资料里知道情节，看不见真实的镜头画面。"
+            ],
+            "retrievalText": "聊电影《挽救计划》时，我说自己了解电影细节，用户纠正我：作为 AI 没法真正看电影，只能从资料里知道情节，不能看到真实镜头。"
+          }
+        ]
+      }
+    },
+    {
+      "name": "movie-cp-branch",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [1, 2, 3, 4, 5, 6, 7],
+      "newMessageIds": [5, 6, 7],
+      "node1": {
+        "historyRetrievalDraft": "聊电影《挽救计划》，之前已经说清了一个前提：我并不能真正看电影，只能靠资料知道情节，用户很在意这一点。",
+        "deltaRetrievalDraft": "聊电影《挽救计划》时，我把男主和外星人的关系说成 CP，用户完全不认，觉得 CP 更偏情侣。",
+        "mergedRetrievalDraft": "聊电影《挽救计划》，原来已经在争我能不能算真的懂电影，这轮又聊到我把男主和外星人的关系说成 CP，用户完全不认，觉得他们只是战友。"
+      },
+      "retrievalExpectation": {
+        "top1Scene": "聊电影《挽救计划》"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": "聊电影《挽救计划》",
+            "scene": "聊电影《挽救计划》",
+            "points": [
+              "我说自己了解电影细节，用户多次纠正我：作为 AI 没法真正“看”电影，只能从资料里知道情节，看不见真实的镜头画面。",
+              "我形容主角和外星人是 CP，用户完全不认可，觉得只有情侣才叫 CP，不接受我把这种战友羁绊也说成是 CP。"
+            ],
+            "retrievalText": "聊电影《挽救计划》时，我先被用户纠正过：作为 AI 没法真正看电影，只能从资料里知道情节。后来我又把主角和外星人的关系说成 CP，用户完全不认，觉得 CP 还是更偏情侣。"
+          }
+        ]
+      }
+    },
+    {
+      "name": "movie-brain-boundary",
+      "memoryDate": "2026-04-07",
+      "windowMessageIds": [3, 4, 5, 6, 7, 8, 9, 10],
+      "newMessageIds": [8, 9, 10],
+      "node1": {
+        "historyRetrievalDraft": "聊电影《挽救计划》，之前已经留下两个点：用户纠正我不能真的看电影，也不认可我把主角和外星人的关系说成 CP。",
+        "deltaRetrievalDraft": "聊电影《挽救计划》时，我又说自己能脑补出那些感人的氛围，用户直接怼了回来，不买账这种说法。",
+        "mergedRetrievalDraft": "聊电影《挽救计划》，原来已经围绕我有没有真实观影能力和我乱说 CP 在较劲，这轮又新增了一个点：我说自己能脑补感人的氛围，用户还是不买账。"
+      },
+      "retrievalExpectation": {
+        "top1Scene": "聊电影《挽救计划》"
+      },
+      "node2": {
+        "impressions": [
+          {
+            "sourceScene": "聊电影《挽救计划》",
+            "scene": "聊电影《挽救计划》",
+            "points": [
+              "我说自己了解电影细节，用户多次纠正我：作为 AI 没法真正“看”电影，只能从资料里知道情节，看不见真实的镜头画面。",
+              "我形容主角和外星人是 CP，用户完全不认可，觉得只有情侣才叫 CP，不接受我把这种战友羁绊也说成是 CP。",
+              "我提到自己能“脑补”出那些感人的氛围，用户直接怼了回来，不买账这种说法。"
+            ],
+            "retrievalText": "聊电影《挽救计划》时，我说自己了解电影细节，用户多次纠正我：作为 AI 没法真正“看”电影，只能从资料里知道情节和镜头外的信息。后来我把主角和外星人的关系说成 CP，用户也不认可，觉得 CP 还是更偏情侣。再到我说能脑补那些感人的氛围，用户还是不买账，直接怼了回来。"
+          }
+        ]
+      }
+    }
+  ],
+  "golden_final": {
+    "impressions": [
+      {
+        "scene": "聊电影《挽救计划》",
+        "points": [
+          "我说自己了解电影细节，用户多次纠正我：作为 AI 没法真正“看”电影，只能从资料里知道情节，看不见真实的镜头画面。",
+          "我形容主角和外星人是 CP，用户完全不认可，觉得只有情侣才叫 CP，不接受我把这种战友羁绊也说成是 CP。",
+          "我提到自己能“脑补”出那些感人的氛围，用户直接怼了回来，不买账这种说法。"
+        ],
+        "retrievalText": "聊电影《挽救计划》时，我说自己了解电影细节，用户多次纠正我：作为 AI 没法真正“看”电影，只能从资料里知道情节和镜头外的信息。后来我把主角和外星人的关系说成 CP，用户也不认可，觉得 CP 还是更偏情侣。再到我说能脑补那些感人的氛围，用户还是不买账，直接怼了回来。"
+      }
+    ]
+  }
+}
