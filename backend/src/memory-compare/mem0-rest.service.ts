@@ -45,6 +45,7 @@ export class Mem0RestService {
     const apiKey = this.configService.get<string>(`mem0.${prefix}ApiKey`);
     const model = this.configService.get<string>(`mem0.${prefix}Model`);
     const baseUrl = this.configService.get<string>(`mem0.${prefix}BaseUrl`);
+    const provider = this.configService.get<string>(`mem0.${prefix}Provider`) || 'openai';
     const config: Record<string, unknown> = {};
 
     if (apiKey) {
@@ -56,7 +57,21 @@ export class Mem0RestService {
     }
 
     if (baseUrl) {
-      config.base_url = baseUrl;
+      if (provider === 'openai') {
+        config.openai_base_url = baseUrl;
+      } else if (provider === 'ollama') {
+        config.ollama_base_url = baseUrl;
+      } else if (provider === 'lmstudio') {
+        config.lmstudio_base_url = baseUrl;
+      } else if (provider === 'vllm') {
+        config.vllm_base_url = baseUrl;
+      } else if (provider === 'deepseek') {
+        config.deepseek_base_url = baseUrl;
+      } else if (provider === 'minimax') {
+        config.minimax_base_url = baseUrl;
+      } else {
+        config.base_url = baseUrl;
+      }
     }
 
     if (prefix === 'llm') {

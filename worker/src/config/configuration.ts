@@ -25,7 +25,7 @@ export default () => ({
     graphEnabled: process.env.MEM0_GRAPH_ENABLED === 'true',
     llmProvider: process.env.MEM0_LLM_PROVIDER || 'openai',
     llmApiKey: process.env.MEM0_LLM_API_KEY || process.env.OPENAI_API_KEY || '',
-    llmModel: process.env.MEM0_LLM_MODEL || 'gpt-4.1-nano-2025-04-14',
+    llmModel: process.env.MEM0_LLM_MODEL || 'qwen3.6-plus',
     llmBaseUrl: process.env.MEM0_LLM_BASE_URL || '',
     embedderProvider: process.env.MEM0_EMBEDDER_PROVIDER || 'openai',
     embedderApiKey: process.env.MEM0_EMBEDDER_API_KEY || process.env.OPENAI_API_KEY || '',
@@ -45,7 +45,7 @@ export default () => ({
     qwenUrl:
       process.env.DASHSCOPE_QWEN_URL ||
       'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-    qwenModel: process.env.DASHSCOPE_QWEN_MODEL || 'qwen3-max',
+    qwenModel: process.env.DASHSCOPE_QWEN_MODEL || 'qwen3.6-plus',
     enableThinking: process.env.DASHSCOPE_ENABLE_THINKING,
   },
 

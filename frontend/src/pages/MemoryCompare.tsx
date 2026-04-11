@@ -17,6 +17,11 @@ interface Mem0Memory {
   metadata: Record<string, unknown>;
 }
 
+interface ProfileMemory {
+  text: string;
+  time: string;
+}
+
 function BackIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -37,6 +42,7 @@ function formatScore(score: number | null | undefined) {
 export default function MemoryCompare() {
   const [query, setQuery] = useState('用户最近在聊什么');
   const [customResults, setCustomResults] = useState<CustomMemory[]>([]);
+  const [profileResults, setProfileResults] = useState<ProfileMemory[]>([]);
   const [mem0Results, setMem0Results] = useState<Mem0Memory[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -54,6 +60,7 @@ export default function MemoryCompare() {
     try {
       const response = await memoryCompareApi.search(userId, query.trim(), 6);
       setCustomResults(response.data.custom?.context || []);
+      setProfileResults(response.data.profile?.preferences || []);
       setMem0Results(response.data.mem0?.results || []);
     } catch (err) {
       console.error(err);
@@ -124,6 +131,25 @@ export default function MemoryCompare() {
                   {item.points.map((point, pointIndex) => (
                     <p key={pointIndex}>{point}</p>
                   ))}
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="compare-column">
+            <div className="compare-column-header">
+              <h2>Profile Memories</h2>
+              <span>{profileResults.length} results</span>
+            </div>
+            <div className="compare-result-list">
+              {profileResults.length === 0 ? (
+                <p className="compare-empty">No profile results.</p>
+              ) : profileResults.map((item, index) => (
+                <article key={`${item.text}-${index}`} className="compare-result-card">
+                  <div className="compare-card-meta">
+                    <span>{item.time || 'No time'}</span>
+                  </div>
+                  <h3>{item.text}</h3>
                 </article>
               ))}
             </div>

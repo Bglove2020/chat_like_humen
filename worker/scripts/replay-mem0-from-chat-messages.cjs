@@ -43,6 +43,7 @@ function parseArgs(argv) {
     userId: null,
     batchSize: 10,
     limit: 6,
+    timeoutMs: 600000,
     queries: ['用户最近在聊什么', '用户明确提到的事实和偏好', '最近对话中的关键变化'],
   };
 
@@ -58,6 +59,9 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === '--limit' && next) {
       args.limit = Number.parseInt(next, 10);
+      index += 1;
+    } else if (arg === '--timeout-ms' && next) {
+      args.timeoutMs = Number.parseInt(next, 10);
       index += 1;
     } else if (arg === '--queries' && next) {
       args.queries = next.split('|').map((item) => item.trim()).filter(Boolean);
@@ -131,7 +135,7 @@ async function deleteMem0UserMemories(userId) {
   });
 }
 
-async function addMem0Batch(userId, batchId, messages) {
+async function addMem0Batch(userId, batchId, messages, timeoutMs) {
   const messageIds = messages.map((message) => message.id);
   await axios.post(
     mem0Url('/memories'),
@@ -150,7 +154,7 @@ async function addMem0Batch(userId, batchId, messages) {
     },
     {
       headers: mem0Headers(),
-      timeout: 120000,
+      timeout: timeoutMs,
     },
   );
 }
@@ -280,7 +284,7 @@ async function searchCustom(userId, query, limit) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!Number.isInteger(args.userId) || args.userId <= 0) {
-    throw new Error('Usage: node scripts/replay-mem0-from-chat-messages.cjs --user-id <id> [--batch-size 10] [--limit 6] [--queries "query1|query2"]');
+    throw new Error('Usage: node scripts/replay-mem0-from-chat-messages.cjs --user-id <id> [--batch-size 10] [--limit 6] [--timeout-ms 600000] [--queries "query1|query2"]');
   }
 
   const outputDir = path.join(rootDir, 'test-results', 'memory-compare', `user-${args.userId}`);
@@ -295,7 +299,7 @@ async function main() {
   for (let index = 0; index < messages.length; index += args.batchSize) {
     const batch = messages.slice(index, index + args.batchSize);
     const batchId = `${args.userId}_replay_${index / args.batchSize + 1}`;
-    await addMem0Batch(args.userId, batchId, batch);
+    await addMem0Batch(args.userId, batchId, batch, args.timeoutMs);
     console.log(`[ReplayMem0] Replayed ${batchId}: ${batch.length} messages`);
   }
 
