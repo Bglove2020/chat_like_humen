@@ -25,7 +25,7 @@ function createMemory(
   return {
     id: 'memory-1',
     score: 0.9,
-    userId: 1,
+    openId: 'open-id-1',
     type: 'preference',
     content: '用户喜欢喝冰美式',
     keywords: ['冰美式', '咖啡'],
@@ -129,7 +129,7 @@ describe('UserProfileMemoryService reconcile decisions', () => {
 
   it('increases strength score when the same preference is confirmed again', () => {
     const payload = (service as any).buildPayload({
-      userId: 1,
+      openId: 'open-id-1',
       batchId: 'batch-1',
       candidate: createCandidate(),
       existing: createMemory({ strengthScore: 2 }),
@@ -141,7 +141,7 @@ describe('UserProfileMemoryService reconcile decisions', () => {
 
   it('resets strength score when a covered preference changes materially', () => {
     const payload = (service as any).buildPayload({
-      userId: 1,
+      openId: 'open-id-1',
       batchId: 'batch-1',
       candidate: createCandidate({
         content: '用户现在不太喝冰美式了，改喝拿铁',

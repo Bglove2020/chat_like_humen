@@ -10,7 +10,7 @@ import {
 } from './fact-extraction.service';
 
 export interface UserProfileMemoryPayload {
-  userId: number;
+  openId: string;
   type: ProfileMemoryType;
   content: string;
   keywords: string[];
@@ -102,7 +102,7 @@ export class UserProfileMemoryService {
   ) {}
 
   async reconcileAndPersist(
-    userId: number,
+    openId: string,
     batchId: string,
     messages: FactMessageInput[],
     candidates: PreferenceMemoryCandidate[],
@@ -128,7 +128,7 @@ export class UserProfileMemoryService {
     const recalledByCandidate = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,
-        existingMemories: await this.searchExistingMemories(userId, candidate),
+        existingMemories: await this.searchExistingMemories(openId, candidate),
       })),
     );
     const oldMemories = Array.from(
@@ -168,7 +168,7 @@ export class UserProfileMemoryService {
         }
 
         const covered = await this.upsertMemory({
-          userId,
+          openId,
           batchId,
           candidate,
           action: 'update',
@@ -184,7 +184,7 @@ export class UserProfileMemoryService {
       }
 
       const created = await this.upsertMemory({
-        userId,
+        openId,
         batchId,
         candidate,
         action: 'create',
@@ -341,7 +341,7 @@ export class UserProfileMemoryService {
   }
 
   private async searchExistingMemories(
-    userId: number,
+    openId: string,
     candidate: PreferenceMemoryCandidate,
   ): Promise<UserProfileMemoryRecord[]> {
     try {
@@ -357,8 +357,8 @@ export class UserProfileMemoryService {
           filter: {
             must: [
               {
-                key: 'userId',
-                match: { value: userId },
+                key: 'openId',
+                match: { value: openId },
               },
               {
                 key: 'status',
@@ -396,7 +396,7 @@ export class UserProfileMemoryService {
     return {
       id: String(point.id),
       score: Number(point.score || 0),
-      userId: Number(payload.userId),
+      openId: String(payload.openId || ''),
       type:
         payload.type === 'habit' ||
         payload.type === 'constraint' ||
@@ -424,7 +424,7 @@ export class UserProfileMemoryService {
   }
 
   private async upsertMemory(params: {
-    userId: number;
+    openId: string;
     batchId: string;
     candidate: PreferenceMemoryCandidate;
     action: 'create' | 'update';
@@ -433,7 +433,7 @@ export class UserProfileMemoryService {
     const now = new Date().toISOString();
     const id = params.action === 'create' ? randomUUID() : params.existing!.id;
     const payload = this.buildPayload({
-      userId: params.userId,
+      openId: params.openId,
       batchId: params.batchId,
       candidate: params.candidate,
       existing: params.existing,
@@ -472,13 +472,13 @@ export class UserProfileMemoryService {
   }
 
   private buildPayload(params: {
-    userId: number;
+    openId: string;
     batchId: string;
     candidate: PreferenceMemoryCandidate;
     existing?: UserProfileMemoryRecord;
     now: string;
   }): UserProfileMemoryPayload {
-    const { userId, batchId, candidate, existing, now } = params;
+    const { openId, batchId, candidate, existing, now } = params;
     const keywords = normalizeKeywords(
       candidate.keywords.length ? candidate.keywords : existing?.keywords || [],
     );
@@ -489,7 +489,7 @@ export class UserProfileMemoryService {
     });
 
     return {
-      userId,
+      openId,
       type: candidate.type || existing?.type || 'preference',
       content: normalizeText(candidate.content || existing?.content, 200),
       keywords,

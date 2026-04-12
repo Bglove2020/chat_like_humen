@@ -129,6 +129,19 @@ export class QdrantService {
     return this.configService.get<string>('backend.internalUrl')!;
   }
 
+  private getBackendInternalApiKey(): string {
+    return this.configService.get<string>('backend.internalApiKey')!;
+  }
+
+  private getBackendRequestConfig() {
+    const apiKey = this.getBackendInternalApiKey();
+    return {
+      headers: {
+        'x-api-key': apiKey,
+      },
+    };
+  }
+
   private getEmbeddingDim(): number {
     return this.configService.get<number>('dashscope.embeddingDim')!;
   }
@@ -324,6 +337,7 @@ export class QdrantService {
     const response = await axios.post(
       `${this.getBackendInternalUrl()}/internal/memory/lines/recent`,
       { openId, limit },
+      this.getBackendRequestConfig(),
     );
     return Array.isArray(response.data) ? response.data : [];
   }
@@ -332,6 +346,7 @@ export class QdrantService {
     const response = await axios.post(
       `${this.getBackendInternalUrl()}/internal/memory/lines/keyword-search`,
       { openId, query, limit },
+      this.getBackendRequestConfig(),
     );
     return Array.isArray(response.data) ? response.data : [];
   }
@@ -340,6 +355,7 @@ export class QdrantService {
     const response = await axios.post(
       `${this.getBackendInternalUrl()}/internal/memory/lines/by-ids`,
       { lineIds },
+      this.getBackendRequestConfig(),
     );
     return Array.isArray(response.data) ? response.data : [];
   }
@@ -348,6 +364,7 @@ export class QdrantService {
     const response = await axios.post(
       `${this.getBackendInternalUrl()}/internal/memory/lines/leaf-points`,
       { lineIds },
+      this.getBackendRequestConfig(),
     );
     return response.data || {};
   }
@@ -367,6 +384,7 @@ export class QdrantService {
         impressionAbstract: '',
         salienceScore: INITIAL_SALIENCE_SCORE,
       },
+      this.getBackendRequestConfig(),
     );
     return response.data as BackendLineRecord;
   }
@@ -384,6 +402,7 @@ export class QdrantService {
         salienceScore,
         lastActivatedAt: new Date().toISOString(),
       },
+      this.getBackendRequestConfig(),
     );
     return response.data || null;
   }
@@ -410,6 +429,7 @@ export class QdrantService {
         memoryDate: params.memoryDate,
         salienceScore: params.salienceScore,
       },
+      this.getBackendRequestConfig(),
     );
     return response.data as BackendPointRecord;
   }
@@ -427,6 +447,7 @@ export class QdrantService {
         batchId: params.batchId,
         salienceScore: params.salienceScore,
       },
+      this.getBackendRequestConfig(),
     );
     return response.data || null;
   }
@@ -446,6 +467,7 @@ export class QdrantService {
         messageIds: uniqueMessageIds,
         batchId,
       },
+      this.getBackendRequestConfig(),
     );
   }
 

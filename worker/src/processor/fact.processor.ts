@@ -9,7 +9,7 @@ import {
 import { UserProfileMemoryService } from '../services/user-profile-memory.service';
 
 export interface FactJobData {
-  userId: number;
+  openId: string;
   batchId: string;
   messages: FactMessageInput[];
 }
@@ -30,7 +30,7 @@ export class FactProcessor extends WorkerHost {
   }
 
   async process(job: Job<FactJobData>): Promise<void> {
-    const { userId, batchId } = job.data;
+    const { openId, batchId } = job.data;
     const messages = (job.data.messages || [])
       .filter(
         (message) => message.role === 'user' || message.role === 'assistant',
@@ -39,7 +39,7 @@ export class FactProcessor extends WorkerHost {
     const userMessages = messages.filter((message) => message.role === 'user');
 
     console.log(
-      `[FactProcessor] Received job ${job.id} (batchId: ${batchId}) for user ${userId}, ` +
+      `[FactProcessor] Received job ${job.id} (batchId: ${batchId}) for openId ${openId}, ` +
         `messages=${messages.length}, userMessages=${userMessages.length}`,
     );
 
@@ -52,14 +52,14 @@ export class FactProcessor extends WorkerHost {
 
     if (fixedFieldCount > 0) {
       await this.upsertStructuredProfile(
-        userId,
+        openId,
         batchId,
         extraction.structuredProfile,
       );
     }
 
     const memoryStats = await this.userProfileMemoryService.reconcileAndPersist(
-      userId,
+      openId,
       batchId,
       messages,
       extraction.preferenceMemories,
@@ -73,20 +73,28 @@ export class FactProcessor extends WorkerHost {
   }
 
   private async upsertStructuredProfile(
-    userId: number,
+    openId: string,
     batchId: string,
     fields: Record<string, string>,
   ): Promise<void> {
     const backendInternalUrl = this.configService.get<string>(
       'backend.internalUrl',
     )!;
+    const backendInternalApiKey = this.configService.get<string>(
+      'backend.internalApiKey',
+    )!;
 
     await axios.post(
-      `${backendInternalUrl}/api/internal/user-profiles/upsert`,
+      `${backendInternalUrl}/internal/user-profiles/upsert`,
       {
-        userId,
+        openId,
         batchId,
         fields,
+      },
+      {
+        headers: {
+          'x-api-key': backendInternalApiKey,
+        },
       },
     );
   }

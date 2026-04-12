@@ -382,6 +382,7 @@ function createService(backend: InMemoryBackend, dashscopeService: any): QdrantS
         'qdrant.collectionName': 'user_impressions',
         'qdrant.url': 'http://qdrant.test:6333',
         'backend.internalUrl': 'http://backend.test:7001',
+        'backend.internalApiKey': 'test-internal-key',
         'dashscope.embeddingDim': 4,
       };
       return values[key];

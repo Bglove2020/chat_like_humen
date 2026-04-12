@@ -1,6 +1,7 @@
 export default () => ({
   backend: {
     internalUrl: process.env.BACKEND_INTERNAL_URL || 'http://127.0.0.1:7001',
+    internalApiKey: process.env.BACKEND_INTERNAL_API_KEY || '1234567890',
   },
 
   redis: {
