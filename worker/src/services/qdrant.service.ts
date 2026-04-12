@@ -20,7 +20,7 @@ import {
 export interface ChatMessage extends ChatMessageInput {}
 
 export interface SummaryJobData {
-  userId: number;
+  openId: string;
   sessionId?: string;
   date: string;
   batchId: string;
@@ -28,7 +28,7 @@ export interface SummaryJobData {
 }
 
 interface BackendLineRecord extends MemoryLineCandidate {
-  userId?: number;
+  openId?: string;
   sessionId?: string | null;
   impressionVersion?: number;
   createdAt?: string;
@@ -37,7 +37,7 @@ interface BackendLineRecord extends MemoryLineCandidate {
 
 interface BackendPointRecord {
   id: string;
-  userId: number;
+  openId: string;
   sessionId: string | null;
   lineId: string;
   op: MemoryPointOp;
@@ -63,7 +63,7 @@ interface RecallBucket {
 }
 
 interface QdrantLeafPayload {
-  userId: number;
+  openId: string;
   sessionId: string | null;
   lineId: string;
   op: MemoryPointOp;
@@ -181,7 +181,7 @@ export class QdrantService {
   }
 
   private async searchPoints(
-    userId: number,
+    openId: string,
     query: string,
     limit: number,
   ): Promise<RetrievedMemoryPoint[]> {
@@ -200,8 +200,8 @@ export class QdrantService {
         filter: {
           must: [
             {
-              key: 'userId',
-              match: { value: userId },
+              key: 'openId',
+              match: { value: openId },
             },
           ],
         },
@@ -255,7 +255,7 @@ export class QdrantService {
   private async upsertLeafPoint(point: BackendPointRecord, line: BackendLineRecord): Promise<void> {
     const embedding = await this.dashscopeService.getEmbedding(point.text);
     const payload: QdrantLeafPayload = {
-      userId: point.userId,
+      openId: point.openId,
       sessionId: point.sessionId,
       lineId: point.lineId,
       op: point.op,
@@ -320,25 +320,25 @@ export class QdrantService {
     );
   }
 
-  private async getRecentLines(userId: number, limit = RECENT_LINE_LIMIT): Promise<BackendLineRecord[]> {
+  private async getRecentLines(openId: string, limit = RECENT_LINE_LIMIT): Promise<BackendLineRecord[]> {
     const response = await axios.post(
-      `${this.getBackendInternalUrl()}/api/internal/memory/lines/recent`,
-      { userId, limit },
+      `${this.getBackendInternalUrl()}/internal/memory/lines/recent`,
+      { openId, limit },
     );
     return Array.isArray(response.data) ? response.data : [];
   }
 
-  private async searchLinesByKeywords(userId: number, query: string, limit = KEYWORD_LINE_LIMIT): Promise<BackendLineRecord[]> {
+  private async searchLinesByKeywords(openId: string, query: string, limit = KEYWORD_LINE_LIMIT): Promise<BackendLineRecord[]> {
     const response = await axios.post(
-      `${this.getBackendInternalUrl()}/api/internal/memory/lines/keyword-search`,
-      { userId, query, limit },
+      `${this.getBackendInternalUrl()}/internal/memory/lines/keyword-search`,
+      { openId, query, limit },
     );
     return Array.isArray(response.data) ? response.data : [];
   }
 
   private async getLinesByIds(lineIds: string[]): Promise<BackendLineRecord[]> {
     const response = await axios.post(
-      `${this.getBackendInternalUrl()}/api/internal/memory/lines/by-ids`,
+      `${this.getBackendInternalUrl()}/internal/memory/lines/by-ids`,
       { lineIds },
     );
     return Array.isArray(response.data) ? response.data : [];
@@ -346,21 +346,21 @@ export class QdrantService {
 
   private async getLeafPointsByLineIds(lineIds: string[]): Promise<Record<string, BackendPointRecord[]>> {
     const response = await axios.post(
-      `${this.getBackendInternalUrl()}/api/internal/memory/lines/leaf-points`,
+      `${this.getBackendInternalUrl()}/internal/memory/lines/leaf-points`,
       { lineIds },
     );
     return response.data || {};
   }
 
   private async createLine(params: {
-    userId: number;
+    openId: string;
     sessionId?: string;
     anchorLabel: string;
   }): Promise<BackendLineRecord> {
     const response = await axios.post(
-      `${this.getBackendInternalUrl()}/api/internal/memory/lines`,
+      `${this.getBackendInternalUrl()}/internal/memory/lines`,
       {
-        userId: params.userId,
+        openId: params.openId,
         sessionId: params.sessionId || null,
         anchorLabel: params.anchorLabel,
         impressionLabel: params.anchorLabel,
@@ -377,7 +377,7 @@ export class QdrantService {
     salienceScore: number,
   ): Promise<BackendLineRecord | null> {
     const response = await axios.patch(
-      `${this.getBackendInternalUrl()}/api/internal/memory/lines/${lineId}/impression`,
+      `${this.getBackendInternalUrl()}/internal/memory/lines/${lineId}/impression`,
       {
         impressionLabel: impression.impressionLabel,
         impressionAbstract: impression.impressionAbstract,
@@ -389,7 +389,7 @@ export class QdrantService {
   }
 
   private async createPoint(params: {
-    userId: number;
+    openId: string;
     sessionId?: string;
     lineId: string;
     op: MemoryPointOp;
@@ -399,9 +399,9 @@ export class QdrantService {
     salienceScore: number;
   }): Promise<BackendPointRecord> {
     const response = await axios.post(
-      `${this.getBackendInternalUrl()}/api/internal/memory/points`,
+      `${this.getBackendInternalUrl()}/internal/memory/points`,
       {
-        userId: params.userId,
+        openId: params.openId,
         sessionId: params.sessionId || null,
         lineId: params.lineId,
         op: params.op,
@@ -421,7 +421,7 @@ export class QdrantService {
     salienceScore: number;
   }): Promise<BackendPointRecord | null> {
     const response = await axios.patch(
-      `${this.getBackendInternalUrl()}/api/internal/memory/points/${params.pointId}`,
+      `${this.getBackendInternalUrl()}/internal/memory/points/${params.pointId}`,
       {
         text: params.text,
         batchId: params.batchId,
@@ -440,7 +440,7 @@ export class QdrantService {
     }
 
     await axios.post(
-      `${this.getBackendInternalUrl()}/api/internal/memory/point-message-links`,
+      `${this.getBackendInternalUrl()}/internal/memory/point-message-links`,
       {
         pointId,
         messageIds: uniqueMessageIds,
@@ -476,7 +476,7 @@ export class QdrantService {
     });
   }
 
-  private async recallPointsForDrafts(userId: number, drafts: RetrievalDrafts): Promise<RetrievedMemoryPoint[]> {
+  private async recallPointsForDrafts(openId: string, drafts: RetrievalDrafts): Promise<RetrievedMemoryPoint[]> {
     const buckets: RecallBucket[] = [];
 
     for (const draft of [
@@ -489,7 +489,7 @@ export class QdrantService {
         continue;
       }
 
-      const points = await this.searchPoints(userId, normalizedQuery, QUERY_RECALL_LIMIT);
+      const points = await this.searchPoints(openId, normalizedQuery, QUERY_RECALL_LIMIT);
       buckets.push({ kind: draft.kind, query: normalizedQuery, points });
     }
 
@@ -532,13 +532,13 @@ export class QdrantService {
   }
 
   private async recallCandidateLines(
-    userId: number,
+    openId: string,
     pointText: string,
   ): Promise<MemoryLineCandidate[]> {
     const [recentLines, keywordLines, vectorPoints] = await Promise.all([
-      this.getRecentLines(userId, RECENT_LINE_LIMIT),
-      this.searchLinesByKeywords(userId, pointText, KEYWORD_LINE_LIMIT),
-      this.searchPoints(userId, pointText, QUERY_RECALL_LIMIT),
+      this.getRecentLines(openId, RECENT_LINE_LIMIT),
+      this.searchLinesByKeywords(openId, pointText, KEYWORD_LINE_LIMIT),
+      this.searchPoints(openId, pointText, QUERY_RECALL_LIMIT),
     ]);
 
     const bucket = new Map<string, CandidateLineAccumulator>();
@@ -643,7 +643,7 @@ export class QdrantService {
   }
 
   private async processSourcePointDrafts(params: {
-    userId: number;
+    openId: string;
     sessionId?: string;
     batchId: string;
     batchMemoryDate: string;
@@ -685,7 +685,7 @@ export class QdrantService {
         );
       } else {
         const createdPoint = await this.createPoint({
-          userId: params.userId,
+          openId: params.openId,
           sessionId: params.sessionId,
           lineId: source.lineId,
           op: draft.op,
@@ -708,7 +708,7 @@ export class QdrantService {
   }
 
   private async processNewPointDrafts(params: {
-    userId: number;
+    openId: string;
     sessionId?: string;
     batchId: string;
     batchMemoryDate: string;
@@ -723,7 +723,7 @@ export class QdrantService {
         .filter((draft) => draft.op === 'new' && !draft.sourcePointId)
         .map(async (draft) => {
           const candidateLines = await this.recallCandidateLines(
-            params.userId,
+            params.openId,
             draft.text,
           );
           const route = await this.dashscopeService.attachPointToExistingLine({
@@ -763,7 +763,7 @@ export class QdrantService {
       }
 
       const createdPoint = await this.createPoint({
-        userId: params.userId,
+        openId: params.openId,
         sessionId: params.sessionId,
         lineId: line.id,
         op: 'new',
@@ -791,7 +791,7 @@ export class QdrantService {
 
     for (const group of newLinePlan.newLines) {
       const line = await this.createLine({
-        userId: params.userId,
+        openId: params.openId,
         sessionId: params.sessionId,
         anchorLabel: group.anchorLabel,
       });
@@ -803,7 +803,7 @@ export class QdrantService {
         }
 
         const createdPoint = await this.createPoint({
-          userId: params.userId,
+          openId: params.openId,
           sessionId: params.sessionId,
           lineId: line.id,
           op: 'new',
@@ -825,13 +825,13 @@ export class QdrantService {
   }
 
   async processSummaryJob(data: SummaryJobData): Promise<void> {
-    const { userId, sessionId, date, batchId, messages } = data;
+    const { openId, sessionId, date, batchId, messages } = data;
     const startedAt = Date.now();
     const historyMessages = messages.filter((message) => message.isNew === false);
     const newMessages = messages.filter((message) => message.isNew !== false);
     const dirtyLineIds = new Set<string>();
 
-    console.log(`[Worker] Processing batch ${batchId} for user ${userId}`);
+    console.log(`[Worker] Processing batch ${batchId} for openId ${openId}`);
 
     await this.ensureCollection();
 
@@ -843,7 +843,7 @@ export class QdrantService {
       `[Worker][Drafts] batch=${batchId} history="${drafts.historyRetrievalDraft.substring(0, 80)}" delta="${drafts.deltaRetrievalDraft.substring(0, 80)}" merged="${drafts.mergedRetrievalDraft.substring(0, 80)}"`,
     );
 
-    const recalledPoints = await this.recallPointsForDrafts(userId, drafts);
+    const recalledPoints = await this.recallPointsForDrafts(openId, drafts);
     console.log(
       `[Worker][RecallPoints] batch=${batchId} recalled=${recalledPoints.length} pointIds=${recalledPoints.map((point) => point.id).join(',')}`,
     );
@@ -872,7 +872,7 @@ export class QdrantService {
     );
 
     await this.processSourcePointDrafts({
-      userId,
+      openId,
       sessionId,
       batchId,
       batchMemoryDate: date,
@@ -883,7 +883,7 @@ export class QdrantService {
     });
 
     await this.processNewPointDrafts({
-      userId,
+      openId,
       sessionId,
       batchId,
       batchMemoryDate: date,

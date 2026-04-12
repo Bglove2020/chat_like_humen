@@ -27,8 +27,8 @@ export class SummaryProcessor extends WorkerHost {
   }
 
   async process(job: Job<SummaryJobData>, token?: string): Promise<void> {
-    const userId = job.data.userId;
-    const lockKey = `processing:user:${userId}`;
+    const openId = job.data.openId;
+    const lockKey = `processing:user:${openId}`;
     const retryAtKey = `${lockKey}:retryAt`;
     const jobId = String(job.id || 'unknown');
     const totalAttempts = job.opts.attempts || 1;
@@ -37,7 +37,7 @@ export class SummaryProcessor extends WorkerHost {
     let releaseLock = true;
 
     console.log(
-      `[Processor] Received job ${job.id} (batchId: ${job.data.batchId}) for user ${userId} ` +
+      `[Processor] Received job ${job.id} (batchId: ${job.data.batchId}) for openId ${openId} ` +
       `(attempt ${currentAttempt}/${totalAttempts})`,
     );
 
@@ -49,21 +49,21 @@ export class SummaryProcessor extends WorkerHost {
         ? Math.max(LOCK_CONFLICT_DELAY_MS, retryAt - Date.now() + RETRY_DELAY_BUFFER_MS)
         : LOCK_CONFLICT_DELAY_MS;
       console.log(
-        `[Processor] User ${userId} is blocked by job ${lockOwner}; delaying job ${job.id} by ${rescheduleDelayMs}ms` +
+        `[Processor] User ${openId} is blocked by job ${lockOwner}; delaying job ${job.id} by ${rescheduleDelayMs}ms` +
         `${retryAt ? ` (retryAt=${new Date(retryAt).toISOString()})` : ''}`,
       );
       if (!token) {
-        throw new Error(`Missing BullMQ token while delaying job ${job.id} for user ${userId}`);
+        throw new Error(`Missing BullMQ token while delaying job ${job.id} for user ${openId}`);
       }
       await job.moveToDelayed(Date.now() + rescheduleDelayMs, token);
       throw new DelayedError(
-        `User ${userId} is locked by job ${lockOwner}; job ${job.id} moved to delayed`,
+        `User ${openId} is locked by job ${lockOwner}; job ${job.id} moved to delayed`,
       );
     }
     lockOwnedByCurrentJob = true;
 
     try {
-      console.log(`[Processor] Acquired lock for user ${userId} with job ${job.id}`);
+      console.log(`[Processor] Acquired lock for user ${openId} with job ${job.id}`);
       await this.qdrantService.processSummaryJob(job.data);
     } catch (error: any) {
       const willRetry = currentAttempt < totalAttempts;
@@ -88,16 +88,16 @@ export class SummaryProcessor extends WorkerHost {
       if (!lockOwnedByCurrentJob) {
         // Lock was never acquired by this job.
       } else if (!releaseLock) {
-        console.log(`[Processor] Retaining lock for user ${userId} until job ${job.id} retry completes`);
+        console.log(`[Processor] Retaining lock for user ${openId} until job ${job.id} retry completes`);
       } else {
         const lockOwner = await this.redis.get(lockKey);
         if (lockOwner === jobId) {
           await this.redis.del(retryAtKey);
           await this.redis.del(lockKey);
-          console.log(`[Processor] Released lock for user ${userId}`);
+          console.log(`[Processor] Released lock for user ${openId}`);
         } else {
           console.log(
-            `[Processor] Skip releasing lock for user ${userId}; current owner is ${lockOwner}`,
+            `[Processor] Skip releasing lock for user ${openId}; current owner is ${lockOwner}`,
           );
         }
       }

@@ -14,7 +14,7 @@ interface StoredVectorPoint {
 
 interface StoredLine {
   id: string;
-  userId: number;
+  openId: string;
   sessionId: string | null;
   anchorLabel: string;
   impressionLabel: string;
@@ -28,7 +28,7 @@ interface StoredLine {
 
 interface StoredPoint {
   id: string;
-  userId: number;
+  openId: string;
   sessionId: string | null;
   lineId: string;
   op: 'new' | 'supplement' | 'revise' | 'conflict';
@@ -213,9 +213,9 @@ class InMemoryBackend {
       return { data: { result: true } };
     }
 
-    if (url.includes('/api/internal/memory/lines/recent')) {
+    if (url.includes('/internal/memory/lines/recent')) {
       const lines = Array.from(this.lines.values())
-        .filter((line) => line.userId === body.userId)
+        .filter((line) => line.openId === body.openId)
         .sort((left, right) => (
           new Date(right.lastActivatedAt).getTime() - new Date(left.lastActivatedAt).getTime()
         ))
@@ -223,10 +223,10 @@ class InMemoryBackend {
       return { data: lines };
     }
 
-    if (url.includes('/api/internal/memory/lines/keyword-search')) {
+    if (url.includes('/internal/memory/lines/keyword-search')) {
       const query = String(body.query || '');
       const lines = Array.from(this.lines.values())
-        .filter((line) => line.userId === body.userId)
+        .filter((line) => line.openId === body.openId)
         .filter((line) => (
           `${line.anchorLabel} ${line.impressionLabel} ${line.impressionAbstract}`.includes(query.slice(0, 4))
           || `${line.anchorLabel} ${line.impressionLabel} ${line.impressionAbstract}`.includes(query)
@@ -235,22 +235,22 @@ class InMemoryBackend {
       return { data: lines };
     }
 
-    if (url.includes('/api/internal/memory/lines/by-ids')) {
+    if (url.includes('/internal/memory/lines/by-ids')) {
       const lines = (body.lineIds || [])
         .map((id: string) => this.lines.get(String(id)))
         .filter((line: StoredLine | undefined): line is StoredLine => Boolean(line));
       return { data: lines };
     }
 
-    if (url.includes('/api/internal/memory/lines/leaf-points')) {
+    if (url.includes('/internal/memory/lines/leaf-points')) {
       return { data: this.buildLeafPointsByLineIds(body.lineIds || []) };
     }
 
-    if (url.endsWith('/api/internal/memory/lines')) {
+    if (url.endsWith('/internal/memory/lines')) {
       const now = this.nextIso();
       const line: StoredLine = {
         id: `line-${this.lineSeq++}`,
-        userId: body.userId,
+        openId: body.openId,
         sessionId: body.sessionId ?? null,
         anchorLabel: body.anchorLabel,
         impressionLabel: body.impressionLabel || body.anchorLabel,
@@ -265,11 +265,11 @@ class InMemoryBackend {
       return { data: line };
     }
 
-    if (url.endsWith('/api/internal/memory/points')) {
+    if (url.endsWith('/internal/memory/points')) {
       const now = this.nextIso();
       const point: StoredPoint = {
         id: `point-${this.pointSeq++}`,
-        userId: body.userId,
+        openId: body.openId,
         sessionId: body.sessionId ?? null,
         lineId: body.lineId,
         op: body.op,
@@ -284,7 +284,7 @@ class InMemoryBackend {
       return { data: point };
     }
 
-    if (url.includes('/api/internal/memory/point-message-links')) {
+    if (url.includes('/internal/memory/point-message-links')) {
       for (const messageId of body.messageIds || []) {
         this.pointLinks.push({
           pointId: body.pointId,
@@ -299,7 +299,7 @@ class InMemoryBackend {
   }
 
   async patch(url: string, body: any) {
-    if (url.includes('/api/internal/memory/lines/') && url.endsWith('/impression')) {
+    if (url.includes('/internal/memory/lines/') && url.endsWith('/impression')) {
       const lineId = url.split('/').slice(-2, -1)[0];
       const line = this.lines.get(lineId);
       if (!line) {
@@ -316,7 +316,7 @@ class InMemoryBackend {
       return { data: line };
     }
 
-    if (url.includes('/api/internal/memory/points/')) {
+    if (url.includes('/internal/memory/points/')) {
       const pointId = url.split('/').slice(-1)[0];
       const point = this.points.get(pointId);
       if (!point) {
@@ -434,7 +434,7 @@ describe('memory architecture replay', () => {
     const service = createService(backend, dashscopeService);
 
     await service.processSummaryJob({
-      userId: 1,
+      openId: 'user-1',
       sessionId: 'session-1',
       date: '2026-04-11',
       batchId: 'same-day-1',
@@ -445,7 +445,7 @@ describe('memory architecture replay', () => {
     });
 
     await service.processSummaryJob({
-      userId: 1,
+      openId: 'user-1',
       sessionId: 'session-1',
       date: '2026-04-11',
       batchId: 'same-day-2',
@@ -495,7 +495,7 @@ describe('memory architecture replay', () => {
     const service = createService(backend, dashscopeService);
 
     await service.processSummaryJob({
-      userId: 2,
+      openId: 'user-2',
       sessionId: 'session-2',
       date: '2026-04-10',
       batchId: 'cross-day-1',
@@ -506,7 +506,7 @@ describe('memory architecture replay', () => {
     });
 
     await service.processSummaryJob({
-      userId: 2,
+      openId: 'user-2',
       sessionId: 'session-2',
       date: '2026-04-11',
       batchId: 'cross-day-2',
@@ -565,7 +565,7 @@ describe('memory architecture replay', () => {
     const service = createService(backend, dashscopeService);
 
     await service.processSummaryJob({
-      userId: 3,
+      openId: 'user-3',
       sessionId: 'session-3',
       date: '2026-04-11',
       batchId: 'attach-1',
@@ -576,7 +576,7 @@ describe('memory architecture replay', () => {
     });
 
     await service.processSummaryJob({
-      userId: 3,
+      openId: 'user-3',
       sessionId: 'session-3',
       date: '2026-04-11',
       batchId: 'attach-2',
@@ -625,7 +625,7 @@ describe('memory architecture replay', () => {
     const service = createService(backend, dashscopeService);
 
     await service.processSummaryJob({
-      userId: 4,
+      openId: 'user-4',
       sessionId: 'session-4',
       date: '2026-04-11',
       batchId: 'multi-line-1',
