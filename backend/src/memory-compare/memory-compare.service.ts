@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ImpressionsService } from '../impressions/impressions.service';
 import { UserProfileService } from '../users/user-profile.service';
-import { Mem0RestService } from './mem0-rest.service';
 
 const DEFAULT_LIMIT = 6;
 const MAX_LIMIT = 20;
@@ -21,7 +20,6 @@ export class MemoryCompareService {
   constructor(
     private impressionsService: ImpressionsService,
     private userProfileService: UserProfileService,
-    private mem0RestService: Mem0RestService,
   ) {}
 
   private normalizeLimit(limit?: number): number {
@@ -47,21 +45,15 @@ export class MemoryCompareService {
 
   async search(userId: number, query: string, limit?: number) {
     const normalizedLimit = this.normalizeLimit(limit);
-    const [customResult, profileResult, mem0Result] = await Promise.allSettled([
+    const [customResult, profileResult] = await Promise.allSettled([
       this.impressionsService.searchUserImpressions(userId, query, normalizedLimit),
       this.userProfileService.searchPreferenceMemories(userId, query, normalizedLimit),
-      this.mem0RestService.search(userId, query, normalizedLimit),
     ]);
     const customImpressions = customResult.status === 'fulfilled' ? customResult.value : [];
     const profileMemories = profileResult.status === 'fulfilled' ? profileResult.value : [];
-    const mem0Results = mem0Result.status === 'fulfilled' ? mem0Result.value : [];
 
     if (customResult.status === 'rejected') {
       console.error('[MemoryCompare] Custom search error:', customResult.reason?.message || customResult.reason);
-    }
-
-    if (mem0Result.status === 'rejected') {
-      console.error('[MemoryCompare] Mem0 search error:', mem0Result.reason?.message || mem0Result.reason);
     }
 
     if (profileResult.status === 'rejected') {
@@ -79,9 +71,6 @@ export class MemoryCompareService {
       },
       profile: {
         preferences: profileMemories,
-      },
-      mem0: {
-        results: mem0Results,
       },
     };
   }

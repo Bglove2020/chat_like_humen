@@ -107,6 +107,10 @@ export interface LineImpressionDraft {
   impressionAbstract: string;
 }
 
+interface QwenCallOptions {
+  enableThinking?: boolean;
+}
+
 const MAX_SCENE_CHARS = 60;
 const MAX_POINT_CHARS = 180;
 const MAX_ENTITY_CHARS = 48;
@@ -114,11 +118,23 @@ const MAX_RETRIEVAL_CHARS = 360;
 const MAX_FINAL_POINTS = 3;
 const MAX_CANDIDATE_POINTS = 3;
 const EMOJI_RE = /[\p{Extended_Pictographic}\uFE0F]/gu;
-const ANALYSIS_WORD_RE = /(说明了|体现了|体现出|反映出|意味着|认知偏差|达成一致|完成校准|行为偏好|接梗失败)/g;
-const HIGH_SIGNAL_POINT_RE = /(用户|我|计划|打算|想|顾虑|担心|纠正|不接受|更偏向|只够|限制|边界|目标|继续|改成|补充)/;
-const DURABLE_POINT_RE = /(计划|打算|想|顾虑|担心|目标|增进感情|限制|只能|纠正|时间|行程|劳累|疲惫|预算|现金流|人手|借款|辞职|训练|配速|膝盖|不舒服|周末|早餐|下午茶|前同事|拼豆|电影)/;
-const GENERIC_DURABLE_TAGS = new Set(['计划', '打算', '拼豆', '电影', '早餐', '下午茶', '周末']);
-const CONCERN_MESSAGE_RE = /(顾虑|担心|怕|犹豫|纠结|累|劳累|疲惫|时间紧|赶|空档|只够|最多|行程)/;
+const ANALYSIS_WORD_RE =
+  /(说明了|体现了|体现出|反映出|意味着|认知偏差|达成一致|完成校准|行为偏好|接梗失败)/g;
+const HIGH_SIGNAL_POINT_RE =
+  /(用户|我|计划|打算|想|顾虑|担心|纠正|不接受|更偏向|只够|限制|边界|目标|继续|改成|补充)/;
+const DURABLE_POINT_RE =
+  /(计划|打算|想|顾虑|担心|目标|增进感情|限制|只能|纠正|时间|行程|劳累|疲惫|预算|现金流|人手|借款|辞职|训练|配速|膝盖|不舒服|周末|早餐|下午茶|前同事|拼豆|电影)/;
+const GENERIC_DURABLE_TAGS = new Set([
+  '计划',
+  '打算',
+  '拼豆',
+  '电影',
+  '早餐',
+  '下午茶',
+  '周末',
+]);
+const CONCERN_MESSAGE_RE =
+  /(顾虑|担心|怕|犹豫|纠结|累|劳累|疲惫|时间紧|赶|空档|只够|最多|行程)/;
 const CONCERN_POINT_RE = /(顾虑|担心|犹豫|时间紧|时间压力|劳累|疲惫|安排负担)/;
 const SCENE_NOISE_SUFFIX_REPLACEMENTS: Array<[RegExp, string]> = [
   [/的顾虑与互动策略$/g, ''],
@@ -148,7 +164,8 @@ const POINT_NOISE_REPLACEMENTS: Array<[RegExp, string]> = [
   [/笑飞了?/g, ''],
   [/被戳中了/g, ''],
 ];
-const LOW_SIGNAL_POINT_RE = /(多次祝福|祝福.*愉快|笑飞|哈哈|稳了|呼应|最后一提醒|冲！|独家款|社恐自救|搬砖心情都会好)/;
+const LOW_SIGNAL_POINT_RE =
+  /(多次祝福|祝福.*愉快|笑飞|哈哈|稳了|呼应|最后一提醒|冲！|独家款|社恐自救|搬砖心情都会好)/;
 
 function normalizeText(text: string, maxLength: number): string {
   return String(text || '')
@@ -204,20 +221,29 @@ function stabilizePointText(text: string): string {
     .replace(/做完还能约奶茶/g, '把互动放在后续自然延续上')
     .replace(/完事奶茶我请/g, '把互动放在后续自然延续上')
     .replace(/下次你挑图案我请奶茶/g, '把互动放在后续自然延续上')
-    .replace(/合作设计图案或边做边聊以创造互动话题/g, '把重点放在选图案和过程中自然聊天')
-    .replace(/合作设计图案或边拼边吐槽以创造互动话题/g, '把重点放在选图案和过程中自然聊天')
+    .replace(
+      /合作设计图案或边做边聊以创造互动话题/g,
+      '把重点放在选图案和过程中自然聊天',
+    )
+    .replace(
+      /合作设计图案或边拼边吐槽以创造互动话题/g,
+      '把重点放在选图案和过程中自然聊天',
+    )
     .replace(/合作设计图案或边做边聊/g, '把重点放在选图案和过程中自然聊天')
     .replace(/合作设计图案或边拼边吐槽/g, '把重点放在选图案和过程中自然聊天');
 
   if (
-    /增进感情/.test(next)
-    && /(低互动|各做各的|不符合用户期待|用户不接受这种低互动理解)/.test(next)
+    /增进感情/.test(next) &&
+    /(低互动|各做各的|不符合用户期待|用户不接受这种低互动理解)/.test(next)
   ) {
     const leadRaw = next.split(/[；。]/)[0] || next;
     const lead = sanitizeGeneratedText(leadRaw, MAX_POINT_CHARS)
       .replace(/，?我(?:起初)?建议[^，；。]*/g, '')
       .replace(/，?我起初更强调[^，；。]*/g, '')
-      .replace(/，?(?:被用户评价为[^，；。]*|用户不接受这种低互动理解|不符合用户期待)/g, '')
+      .replace(
+        /，?(?:被用户评价为[^，；。]*|用户不接受这种低互动理解|不符合用户期待)/g,
+        '',
+      )
       .replace(/[，；。]+$/, '')
       .trim();
 
@@ -225,7 +251,9 @@ function stabilizePointText(text: string): string {
     next = `${normalizedLead}${/不接受把这件事理解成低互动安排/.test(normalizedLead) ? '' : '，不接受把这件事理解成低互动安排'}；我随后把建议调整为更强调过程中自然互动`;
   }
 
-  if (/(只能各自独立操作|只能自己做自己的|没法一起拼|无法两人共同拼凑)/.test(next)) {
+  if (
+    /(只能各自独立操作|只能自己做自己的|没法一起拼|无法两人共同拼凑)/.test(next)
+  ) {
     const interactionTail = /图案/.test(next)
       ? '我随后把互动建议调整为把重点放在选图案和过程中自然聊天'
       : '我随后把互动建议调整为把重点放在过程中自然聊天';
@@ -265,7 +293,10 @@ function isLowSignalPoint(point: string): boolean {
     return true;
   }
 
-  if (LOW_SIGNAL_POINT_RE.test(normalized) && !HIGH_SIGNAL_POINT_RE.test(normalized)) {
+  if (
+    LOW_SIGNAL_POINT_RE.test(normalized) &&
+    !HIGH_SIGNAL_POINT_RE.test(normalized)
+  ) {
     return true;
   }
 
@@ -308,13 +339,22 @@ function extractDurableTags(text: string): string[] {
   return tags.filter((tag) => normalized.includes(tag));
 }
 
-function shouldCarryForwardPoint(sourcePoint: string, finalPoints: string[]): boolean {
+function shouldCarryForwardPoint(
+  sourcePoint: string,
+  finalPoints: string[],
+): boolean {
   const normalizedSource = stabilizePointText(sourcePoint);
-  if (!normalizedSource || isLowSignalPoint(normalizedSource) || !DURABLE_POINT_RE.test(normalizedSource)) {
+  if (
+    !normalizedSource ||
+    isLowSignalPoint(normalizedSource) ||
+    !DURABLE_POINT_RE.test(normalizedSource)
+  ) {
     return false;
   }
 
-  const finalText = finalPoints.map((point) => stabilizePointText(point)).join('；');
+  const finalText = finalPoints
+    .map((point) => stabilizePointText(point))
+    .join('；');
   if (!finalText) {
     return true;
   }
@@ -329,7 +369,9 @@ function shouldCarryForwardPoint(sourcePoint: string, finalPoints: string[]): bo
   }
 
   const finalTags = extractDurableTags(finalText);
-  const informativeOverlap = sourceTags.filter((tag) => !GENERIC_DURABLE_TAGS.has(tag) && finalTags.includes(tag));
+  const informativeOverlap = sourceTags.filter(
+    (tag) => !GENERIC_DURABLE_TAGS.has(tag) && finalTags.includes(tag),
+  );
   const overlap = sourceTags.filter((tag) => finalTags.includes(tag)).length;
 
   if (!informativeOverlap.length) {
@@ -348,11 +390,13 @@ function normalizePoints(points: unknown): string[] {
     return [];
   }
 
-  return Array.from(new Set(
-    points
-      .flatMap((point) => splitLongPoint(String(point || '')))
-      .filter(Boolean),
-  )).slice(0, 6);
+  return Array.from(
+    new Set(
+      points
+        .flatMap((point) => splitLongPoint(String(point || '')))
+        .filter(Boolean),
+    ),
+  ).slice(0, 6);
 }
 
 function normalizeEntities(entities: unknown): string[] {
@@ -360,27 +404,36 @@ function normalizeEntities(entities: unknown): string[] {
     return [];
   }
 
-  return Array.from(new Set(
-    entities
-      .map((entity) => normalizeText(String(entity || ''), MAX_ENTITY_CHARS))
-      .filter(Boolean),
-  )).slice(0, 8);
+  return Array.from(
+    new Set(
+      entities
+        .map((entity) => normalizeText(String(entity || ''), MAX_ENTITY_CHARS))
+        .filter(Boolean),
+    ),
+  ).slice(0, 8);
 }
 
-function normalizeEvidenceMessageIds(evidenceMessageIds: unknown, allowedIds?: Set<number>): number[] {
+function normalizeEvidenceMessageIds(
+  evidenceMessageIds: unknown,
+  allowedIds?: Set<number>,
+): number[] {
   if (!Array.isArray(evidenceMessageIds)) {
     return [];
   }
 
-  return Array.from(new Set(
-    evidenceMessageIds
-      .map((item) => Number.parseInt(String(item), 10))
-      .filter((item) => Number.isInteger(item) && item > 0)
-      .filter((item) => !allowedIds || allowedIds.has(item)),
-  )).slice(0, 8);
+  return Array.from(
+    new Set(
+      evidenceMessageIds
+        .map((item) => Number.parseInt(String(item), 10))
+        .filter((item) => Number.isInteger(item) && item > 0)
+        .filter((item) => !allowedIds || allowedIds.has(item)),
+    ),
+  ).slice(0, 8);
 }
 
-function formatBeijingTimestamp(timestamp: string | null | undefined): string | null {
+function formatBeijingTimestamp(
+  timestamp: string | null | undefined,
+): string | null {
   if (!timestamp) {
     return null;
   }
@@ -417,9 +470,13 @@ function formatBeijingTimestamp(timestamp: string | null | undefined): string | 
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
-function formatPromptMessage(message: ChatMessageInput): Record<string, string | null> {
+function formatPromptMessage(
+  message: ChatMessageInput,
+): Record<string, string | null> {
   return {
-    messageId: Number.isInteger(message.messageId) ? String(message.messageId) : null,
+    messageId: Number.isInteger(message.messageId)
+      ? String(message.messageId)
+      : null,
     role: message.role === 'user' ? 'user' : 'assistant',
     content: String(message.content || ''),
     timestamp: String(message.timestamp || '') || null,
@@ -427,7 +484,9 @@ function formatPromptMessage(message: ChatMessageInput): Record<string, string |
   };
 }
 
-function formatPromptImpression(impression: Impression): Record<string, unknown> {
+function formatPromptImpression(
+  impression: Impression,
+): Record<string, unknown> {
   return {
     id: impression.id,
     scene: impression.scene,
@@ -440,7 +499,9 @@ function formatPromptImpression(impression: Impression): Record<string, unknown>
   };
 }
 
-function formatPromptCandidate(candidate: CandidateImpressionDraft): Record<string, unknown> {
+function formatPromptCandidate(
+  candidate: CandidateImpressionDraft,
+): Record<string, unknown> {
   return {
     scene: candidate.scene,
     points: candidate.points,
@@ -450,7 +511,9 @@ function formatPromptCandidate(candidate: CandidateImpressionDraft): Record<stri
   };
 }
 
-function formatPromptRetrievedPoint(point: RetrievedMemoryPoint): Record<string, unknown> {
+function formatPromptRetrievedPoint(
+  point: RetrievedMemoryPoint,
+): Record<string, unknown> {
   return {
     id: point.id,
     lineId: point.lineId,
@@ -467,14 +530,20 @@ function formatPromptRetrievedPoint(point: RetrievedMemoryPoint): Record<string,
   };
 }
 
-function formatPromptGroupedOldPoints(points: RetrievedMemoryPoint[]): Record<string, unknown>[] {
+function formatPromptGroupedOldPoints(
+  points: RetrievedMemoryPoint[],
+): Record<string, unknown>[] {
   const sorted = [...points].sort((left, right) => {
-    const memoryDateDiff = String(left.memoryDate || '').localeCompare(String(right.memoryDate || ''));
+    const memoryDateDiff = String(left.memoryDate || '').localeCompare(
+      String(right.memoryDate || ''),
+    );
     if (memoryDateDiff !== 0) {
       return memoryDateDiff;
     }
 
-    const createdAtDiff = new Date(left.createdAt || 0).getTime() - new Date(right.createdAt || 0).getTime();
+    const createdAtDiff =
+      new Date(left.createdAt || 0).getTime() -
+      new Date(right.createdAt || 0).getTime();
     if (createdAtDiff !== 0) {
       return createdAtDiff;
     }
@@ -482,13 +551,16 @@ function formatPromptGroupedOldPoints(points: RetrievedMemoryPoint[]): Record<st
     return String(left.id).localeCompare(String(right.id));
   });
 
-  const byLine = new Map<string, {
-    lineId: string;
-    anchorLabel: string;
-    impressionLabel: string;
-    impressionAbstract: string;
-    points: Array<Record<string, unknown>>;
-  }>();
+  const byLine = new Map<
+    string,
+    {
+      lineId: string;
+      anchorLabel: string;
+      impressionLabel: string;
+      impressionAbstract: string;
+      points: Array<Record<string, unknown>>;
+    }
+  >();
 
   for (const point of sorted) {
     let group = byLine.get(point.lineId);
@@ -515,7 +587,9 @@ function formatPromptGroupedOldPoints(points: RetrievedMemoryPoint[]): Record<st
   return Array.from(byLine.values());
 }
 
-function formatPromptLineCandidate(line: MemoryLineCandidate): Record<string, unknown> {
+function formatPromptLineCandidate(
+  line: MemoryLineCandidate,
+): Record<string, unknown> {
   return {
     lineId: line.id,
     anchorLabel: line.anchorLabel,
@@ -538,7 +612,10 @@ function buildFallbackScene(messages: ChatMessageInput[]): string {
 
   const movieMatch = userText.match(/《[^》]+》|挽救计划|电影/);
   if (movieMatch) {
-    return normalizeText(`聊电影${movieMatch[0].startsWith('《') ? movieMatch[0] : '《挽救计划》'}`, MAX_SCENE_CHARS);
+    return normalizeText(
+      `聊电影${movieMatch[0].startsWith('《') ? movieMatch[0] : '《挽救计划》'}`,
+      MAX_SCENE_CHARS,
+    );
   }
 
   if (/面包店|烘焙|早餐|下午茶|铺面|辞职/.test(userText)) {
@@ -557,7 +634,10 @@ function buildFallbackPoints(messages: ChatMessageInput[]): string[] {
   const selected = newMessages.length ? newMessages : messages;
 
   return selected
-    .map((message) => `${message.role === 'user' ? '用户' : '我'}：${normalizeText(message.content, MAX_POINT_CHARS - 4)}`)
+    .map(
+      (message) =>
+        `${message.role === 'user' ? '用户' : '我'}：${normalizeText(message.content, MAX_POINT_CHARS - 4)}`,
+    )
     .slice(-3);
 }
 
@@ -565,7 +645,11 @@ function buildFallbackRetrievalText(scene: string, points: string[]): string {
   return normalizeText([scene, ...points].join('，'), MAX_RETRIEVAL_CHARS);
 }
 
-function buildStructuredRetrievalText(scene: string, points: string[], entities: string[]): string {
+function buildStructuredRetrievalText(
+  scene: string,
+  points: string[],
+  entities: string[],
+): string {
   const parts = [
     scene,
     points.join('；'),
@@ -583,7 +667,11 @@ function prioritizePoint(point: string): number {
   if (/我/.test(point)) {
     score += 2;
   }
-  if (/计划|打算|想|顾虑|担心|纠正|不接受|更偏向|只够|限制|边界|目标|继续|改成|补充/.test(point)) {
+  if (
+    /计划|打算|想|顾虑|担心|纠正|不接受|更偏向|只够|限制|边界|目标|继续|改成|补充/.test(
+      point,
+    )
+  ) {
     score += 3;
   }
   if (/增进感情|自然互动|自然聊天/.test(point)) {
@@ -592,13 +680,20 @@ function prioritizePoint(point: string): number {
   if (/邀请时说|试探说|还能说|哈哈|稳了|奶茶我请|各做各的/.test(point)) {
     score -= 2;
   }
-  if (/过于生硬|风格生硬|思路像|忽略互动需求|短时小图案|小图案以减轻负担/.test(point)) {
+  if (
+    /过于生硬|风格生硬|思路像|忽略互动需求|短时小图案|小图案以减轻负担/.test(
+      point,
+    )
+  ) {
     score -= 3;
   }
   return score;
 }
 
-function normalizePointCollection(points: unknown, maxPoints: number): string[] {
+function normalizePointCollection(
+  points: unknown,
+  maxPoints: number,
+): string[] {
   return Array.from(new Set(normalizePoints(points)))
     .filter((point) => !isLowSignalPoint(point))
     .sort((left, right) => prioritizePoint(right) - prioritizePoint(left))
@@ -609,17 +704,21 @@ function normalizePointCollection(points: unknown, maxPoints: number): string[] 
 export class DashscopeService {
   constructor(private configService: ConfigService) {}
 
-  private logAxiosError(context: string, error: any, extra?: Record<string, unknown>): void {
+  private logAxiosError(
+    context: string,
+    error: any,
+    extra?: Record<string, unknown>,
+  ): void {
     const status = error?.response?.status;
     const statusText = error?.response?.statusText;
     const responseData = error?.response?.data;
     const responseHeaders = error?.response?.headers || {};
     const requestId =
-      responseHeaders['x-request-id']
-      || responseHeaders['x-acs-request-id']
-      || responseHeaders['trace-id']
-      || responseHeaders['traceid']
-      || null;
+      responseHeaders['x-request-id'] ||
+      responseHeaders['x-acs-request-id'] ||
+      responseHeaders['trace-id'] ||
+      responseHeaders['traceid'] ||
+      null;
 
     const payload = {
       context,
@@ -628,9 +727,10 @@ export class DashscopeService {
       status,
       statusText,
       requestId,
-      responseData: typeof responseData === 'string'
-        ? responseData.substring(0, 1000)
-        : responseData,
+      responseData:
+        typeof responseData === 'string'
+          ? responseData.substring(0, 1000)
+          : responseData,
       ...extra,
     };
 
@@ -639,8 +739,12 @@ export class DashscopeService {
 
   async getEmbedding(text: string): Promise<number[]> {
     const apiKey = this.configService.get<string>('dashscope.apiKey');
-    const embeddingUrl = this.configService.get<string>('dashscope.embeddingUrl')!;
-    const embeddingModel = this.configService.get<string>('dashscope.embeddingModel');
+    const embeddingUrl = this.configService.get<string>(
+      'dashscope.embeddingUrl',
+    )!;
+    const embeddingModel = this.configService.get<string>(
+      'dashscope.embeddingModel',
+    );
 
     try {
       const response = await axios.post(
@@ -659,7 +763,10 @@ export class DashscopeService {
 
       const embeddings = response.data.output?.embeddings;
       if (!embeddings || !embeddings[0]?.embedding) {
-        console.error('[DashScope] No embeddings in response:', JSON.stringify(response.data).substring(0, 300));
+        console.error(
+          '[DashScope] No embeddings in response:',
+          JSON.stringify(response.data).substring(0, 300),
+        );
         throw new Error('Invalid embedding response');
       }
       return embeddings[0].embedding;
@@ -690,12 +797,15 @@ export class DashscopeService {
       const raw = await this.callQwenJson(
         this.getRetrievalDraftSystemPrompt(),
         this.buildRetrievalDraftPrompt(params),
+        { enableThinking: true },
       );
       return this.normalizeRetrievalDrafts(raw);
     } catch (error: any) {
       this.logAxiosError('RetrievalDrafts', error, {
         totalMessages: params.messages.length,
-        newMessages: params.messages.filter((message) => message.isNew !== false).length,
+        newMessages: params.messages.filter(
+          (message) => message.isNew !== false,
+        ).length,
       });
       return this.createFallbackRetrievalDrafts(params.messages);
     }
@@ -715,6 +825,7 @@ export class DashscopeService {
       const raw = await this.callQwenJson(
         this.getReconcileImpressionSystemPrompt(),
         this.buildReconcileImpressionPrompt(params),
+        { enableThinking: true },
       );
       return this.mergeFinalImpressionsWithSources(
         this.normalizeFinalImpressions(raw),
@@ -728,7 +839,10 @@ export class DashscopeService {
         recalled: params.oldImpressions.length,
         candidates: params.candidateImpressions.length,
       });
-      return this.createFallbackFinalImpressions(params.candidateImpressions, params.oldImpressions);
+      return this.createFallbackFinalImpressions(
+        params.candidateImpressions,
+        params.oldImpressions,
+      );
     }
   }
 
@@ -745,15 +859,22 @@ export class DashscopeService {
       const raw = await this.callQwenJson(
         this.getCandidateImpressionSystemPrompt(),
         this.buildCandidateImpressionPrompt(params),
+        { enableThinking: true },
       );
-      return this.normalizeCandidateImpressions(raw, [...params.historyMessages, ...params.newMessages]);
+      return this.normalizeCandidateImpressions(raw, [
+        ...params.historyMessages,
+        ...params.newMessages,
+      ]);
     } catch (error: any) {
       this.logAxiosError('CandidateImpressions', error, {
         historyMessages: params.historyMessages.length,
         newMessages: params.newMessages.length,
         recalled: params.oldImpressions.length,
       });
-      return this.createFallbackCandidateImpressions(params.historyMessages, params.newMessages);
+      return this.createFallbackCandidateImpressions(
+        params.historyMessages,
+        params.newMessages,
+      );
     }
   }
 
@@ -773,6 +894,7 @@ export class DashscopeService {
       const raw = await this.callQwenJson(
         this.getNode2PointSystemPrompt(),
         this.buildNode2PointPrompt(params),
+        { enableThinking: true },
       );
       return this.normalizeNode2PointGeneration(raw, params.oldPoints);
     } catch (error: any) {
@@ -781,7 +903,10 @@ export class DashscopeService {
         newMessages: params.newMessages.length,
         recalledPoints: params.oldPoints.length,
       });
-      return this.createFallbackNode2Points(params.historyMessages, params.newMessages);
+      return this.createFallbackNode2Points(
+        params.historyMessages,
+        params.newMessages,
+      );
     }
   }
 
@@ -797,6 +922,7 @@ export class DashscopeService {
       const raw = await this.callQwenJson(
         this.getAttachLineSystemPrompt(),
         this.buildAttachLinePrompt(params),
+        { enableThinking: true },
       );
       return this.normalizeAttachLine(raw, params.candidateLines);
     } catch (error: any) {
@@ -819,6 +945,7 @@ export class DashscopeService {
       const raw = await this.callQwenJson(
         this.getNewLinePlanSystemPrompt(),
         this.buildNewLinePlanPrompt(params),
+        { enableThinking: true },
       );
       return this.normalizeNewLinePlan(raw, params.pointTexts);
     } catch (error: any) {
@@ -835,7 +962,9 @@ export class DashscopeService {
   }): Promise<LineImpressionDraft> {
     if (!params.leafPoints.length) {
       return {
-        impressionLabel: sanitizeSceneText(params.anchorLabel || '聊当前对话场景'),
+        impressionLabel: sanitizeSceneText(
+          params.anchorLabel || '聊当前对话场景',
+        ),
         impressionAbstract: '',
       };
     }
@@ -844,19 +973,31 @@ export class DashscopeService {
       const raw = await this.callQwenJson(
         this.getRebuildLineImpressionSystemPrompt(),
         this.buildRebuildLineImpressionPrompt(params),
+        { enableThinking: true },
       );
-      return this.normalizeLineImpression(raw, params.anchorLabel, params.leafPoints);
+      return this.normalizeLineImpression(
+        raw,
+        params.anchorLabel,
+        params.leafPoints,
+      );
     } catch (error: any) {
       this.logAxiosError('RebuildLineImpression', error, {
         anchorLabel: params.anchorLabel,
         leafPointCount: params.leafPoints.length,
       });
-      return this.createFallbackLineImpression(params.anchorLabel, params.leafPoints);
+      return this.createFallbackLineImpression(
+        params.anchorLabel,
+        params.leafPoints,
+      );
     }
   }
 
-  private async callQwenJson(systemPrompt: string, userPrompt: string): Promise<any> {
-    const text = await this.callQwen(systemPrompt, userPrompt);
+  private async callQwenJson(
+    systemPrompt: string,
+    userPrompt: string,
+    options: QwenCallOptions = {},
+  ): Promise<any> {
+    const text = await this.callQwen(systemPrompt, userPrompt, options);
     const parsed = this.extractJson(text);
     if (parsed === null) {
       throw new Error('Failed to parse JSON from model response');
@@ -864,15 +1005,31 @@ export class DashscopeService {
     return parsed;
   }
 
-  private async callQwen(systemPrompt: string, userPrompt: string): Promise<string> {
+  private async callQwen(
+    systemPrompt: string,
+    userPrompt: string,
+    options: QwenCallOptions = {},
+  ): Promise<string> {
     const apiKey = this.configService.get<string>('dashscope.apiKey')!;
     const qwenUrl = this.configService.get<string>('dashscope.qwenUrl')!;
     const isOldApi = qwenUrl.includes('/api/v1/services/');
 
     try {
       return isOldApi
-        ? await this.callOldApi(qwenUrl, apiKey, systemPrompt, userPrompt)
-        : await this.callOpenAICompatible(qwenUrl, apiKey, systemPrompt, userPrompt);
+        ? await this.callOldApi(
+            qwenUrl,
+            apiKey,
+            systemPrompt,
+            userPrompt,
+            options,
+          )
+        : await this.callOpenAICompatible(
+            qwenUrl,
+            apiKey,
+            systemPrompt,
+            userPrompt,
+            options,
+          );
     } catch (error: any) {
       this.logAxiosError('Qwen', error, {
         url: qwenUrl,
@@ -889,6 +1046,7 @@ export class DashscopeService {
     apiKey: string,
     systemPrompt: string,
     userPrompt: string,
+    options: QwenCallOptions = {},
   ): Promise<string> {
     const response = await axios.post(
       url,
@@ -904,6 +1062,7 @@ export class DashscopeService {
           temperature: 0.2,
           max_tokens: 2000,
           result_format: 'message',
+          enable_thinking: options.enableThinking,
         },
       },
       {
@@ -921,11 +1080,18 @@ export class DashscopeService {
     apiKey: string,
     systemPrompt: string,
     userPrompt: string,
+    options: QwenCallOptions = {},
   ): Promise<string> {
-    const enableThinkingRaw = this.configService.get<string>('dashscope.enableThinking');
-    const enableThinking = enableThinkingRaw === undefined
-      ? false
-      : !['false', '0', 'off'].includes(String(enableThinkingRaw).toLowerCase());
+    const enableThinkingRaw = this.configService.get<string>(
+      'dashscope.enableThinking',
+    );
+    const enableThinking =
+      enableThinkingRaw === undefined
+        ? false
+        : !['false', '0', 'off'].includes(
+            String(enableThinkingRaw).toLowerCase(),
+          );
+    const resolvedEnableThinking = options.enableThinking ?? enableThinking;
 
     const response = await axios.post(
       url,
@@ -937,7 +1103,7 @@ export class DashscopeService {
         ],
         temperature: 0.2,
         max_tokens: 2000,
-        enable_thinking: enableThinking,
+        enable_thinking: resolvedEnableThinking,
       },
       {
         headers: {
@@ -990,46 +1156,74 @@ export class DashscopeService {
   }
 
   private normalizeRetrievalDrafts(raw: any): RetrievalDrafts {
-    const historyRetrievalDraft = normalizeText(raw?.historyRetrievalDraft || '', MAX_RETRIEVAL_CHARS);
-    const deltaRetrievalDraft = normalizeText(raw?.deltaRetrievalDraft || '', MAX_RETRIEVAL_CHARS);
-    const mergedRetrievalDraft = normalizeText(raw?.mergedRetrievalDraft || '', MAX_RETRIEVAL_CHARS);
+    const historyRetrievalDraft = normalizeText(
+      raw?.historyRetrievalDraft || '',
+      MAX_RETRIEVAL_CHARS,
+    );
+    const deltaRetrievalDraft = normalizeText(
+      raw?.deltaRetrievalDraft || '',
+      MAX_RETRIEVAL_CHARS,
+    );
+    const mergedRetrievalDraft = normalizeText(
+      raw?.mergedRetrievalDraft || '',
+      MAX_RETRIEVAL_CHARS,
+    );
 
-    if (!historyRetrievalDraft && !deltaRetrievalDraft && !mergedRetrievalDraft) {
+    if (
+      !historyRetrievalDraft &&
+      !deltaRetrievalDraft &&
+      !mergedRetrievalDraft
+    ) {
       throw new Error('Empty retrieval drafts');
     }
 
     return {
       historyRetrievalDraft,
       deltaRetrievalDraft,
-      mergedRetrievalDraft: mergedRetrievalDraft || [historyRetrievalDraft, deltaRetrievalDraft]
-        .filter(Boolean)
-        .join('；')
-        .substring(0, MAX_RETRIEVAL_CHARS),
+      mergedRetrievalDraft:
+        mergedRetrievalDraft ||
+        [historyRetrievalDraft, deltaRetrievalDraft]
+          .filter(Boolean)
+          .join('；')
+          .substring(0, MAX_RETRIEVAL_CHARS),
     };
   }
 
   private normalizeFinalImpressions(raw: any): FinalImpressionDraft[] {
-    const rawImpressions = Array.isArray(raw?.impressions) ? raw.impressions : [];
+    const rawImpressions = Array.isArray(raw?.impressions)
+      ? raw.impressions
+      : [];
     const normalized = rawImpressions
       .map((item) => ({
-        sourceImpressionId: item?.sourceImpressionId ? String(item.sourceImpressionId) : null,
+        sourceImpressionId: item?.sourceImpressionId
+          ? String(item.sourceImpressionId)
+          : null,
         scene: sanitizeSceneText(item?.scene || ''),
         points: normalizePointCollection(item?.points, MAX_FINAL_POINTS),
         entities: normalizeEntities(item?.entities),
-        retrievalText: sanitizeGeneratedText(item?.retrievalText || '', MAX_RETRIEVAL_CHARS),
+        retrievalText: sanitizeGeneratedText(
+          item?.retrievalText || '',
+          MAX_RETRIEVAL_CHARS,
+        ),
       }))
       .map((item) => ({
         ...item,
-        retrievalText: buildStructuredRetrievalText(item.scene, item.points, item.entities)
-          || item.retrievalText
-          || buildFallbackRetrievalText(item.scene, item.points),
+        retrievalText:
+          buildStructuredRetrievalText(
+            item.scene,
+            item.points,
+            item.entities,
+          ) ||
+          item.retrievalText ||
+          buildFallbackRetrievalText(item.scene, item.points),
       }))
       .filter((item) => item.scene && item.points.length && item.retrievalText)
       .map((item) => ({
         ...item,
-        points: item.points.filter((point, index, all) => (
-          all.findIndex((candidate) => candidate === point) === index
-        )),
+        points: item.points.filter(
+          (point, index, all) =>
+            all.findIndex((candidate) => candidate === point) === index,
+        ),
       }));
 
     if (!normalized.length) {
@@ -1047,10 +1241,14 @@ export class DashscopeService {
     return impressions.map((impression) => {
       const source = this.selectCarrySource(impression, oldImpressions);
       const carryForwardPoints = source?.points?.length
-        ? normalizePointCollection(source.points, MAX_FINAL_POINTS)
-          .filter((point) => shouldCarryForwardPoint(point, impression.points))
+        ? normalizePointCollection(source.points, MAX_FINAL_POINTS).filter(
+            (point) => shouldCarryForwardPoint(point, impression.points),
+          )
         : [];
-      const concernPoint = this.buildConcernCarryPoint(messages, [...carryForwardPoints, ...impression.points]);
+      const concernPoint = this.buildConcernCarryPoint(messages, [
+        ...carryForwardPoints,
+        ...impression.points,
+      ]);
       const mergedPoints = normalizePointCollection(
         [
           ...carryForwardPoints,
@@ -1060,15 +1258,23 @@ export class DashscopeService {
         MAX_FINAL_POINTS,
       );
 
-      if (mergedPoints.length === impression.points.length && !carryForwardPoints.length && !concernPoint) {
+      if (
+        mergedPoints.length === impression.points.length &&
+        !carryForwardPoints.length &&
+        !concernPoint
+      ) {
         return impression;
       }
 
       return {
         ...impression,
         points: mergedPoints,
-        retrievalText: buildStructuredRetrievalText(impression.scene, mergedPoints, impression.entities)
-          || impression.retrievalText,
+        retrievalText:
+          buildStructuredRetrievalText(
+            impression.scene,
+            mergedPoints,
+            impression.entities,
+          ) || impression.retrievalText,
       };
     });
   }
@@ -1081,19 +1287,28 @@ export class DashscopeService {
       return null;
     }
 
-    const directSource = oldImpressions.find((item) => item.id === impression.sourceImpressionId) || null;
-    const rootId = directSource?.rootImpressionId || directSource?.id || impression.sourceImpressionId;
-    const finalTags = extractDurableTags([
-      impression.scene,
-      ...impression.points,
-      ...(impression.entities || []),
-    ].join('；'));
+    const directSource =
+      oldImpressions.find(
+        (item) => item.id === impression.sourceImpressionId,
+      ) || null;
+    const rootId =
+      directSource?.rootImpressionId ||
+      directSource?.id ||
+      impression.sourceImpressionId;
+    const finalTags = extractDurableTags(
+      [
+        impression.scene,
+        ...impression.points,
+        ...(impression.entities || []),
+      ].join('；'),
+    );
 
     const candidates = oldImpressions.filter((item) => {
-      const sameRoot = item.id === impression.sourceImpressionId
-        || item.rootImpressionId === impression.sourceImpressionId
-        || item.id === rootId
-        || item.rootImpressionId === rootId;
+      const sameRoot =
+        item.id === impression.sourceImpressionId ||
+        item.rootImpressionId === impression.sourceImpressionId ||
+        item.id === rootId ||
+        item.rootImpressionId === rootId;
       const sameScene = sanitizeSceneText(item.scene) === impression.scene;
       return sameRoot || sameScene;
     });
@@ -1104,13 +1319,17 @@ export class DashscopeService {
 
     const scored = candidates
       .map((item) => {
-        const sourceTags = extractDurableTags([
-          item.scene,
-          ...(item.points || []),
-          ...((item.entities || []).map((entity) => String(entity))),
-        ].join('；'));
+        const sourceTags = extractDurableTags(
+          [
+            item.scene,
+            ...(item.points || []),
+            ...(item.entities || []).map((entity) => String(entity)),
+          ].join('；'),
+        );
         const overlap = sourceTags.filter((tag) => finalTags.includes(tag));
-        const informativeOverlap = overlap.filter((tag) => !GENERIC_DURABLE_TAGS.has(tag));
+        const informativeOverlap = overlap.filter(
+          (tag) => !GENERIC_DURABLE_TAGS.has(tag),
+        );
         return {
           item,
           score: informativeOverlap.length * 10 + overlap.length * 3,
@@ -1132,22 +1351,31 @@ export class DashscopeService {
     messages: ChatMessageInput[],
     points: string[],
   ): string | null {
-    const finalText = points.map((point) => stabilizePointText(point)).join('；');
+    const finalText = points
+      .map((point) => stabilizePointText(point))
+      .join('；');
     if (CONCERN_POINT_RE.test(finalText)) {
       return null;
     }
 
-    const userConcernMessages = messages.filter((message) => (
-      message.role === 'user' && CONCERN_MESSAGE_RE.test(message.content)
-    ));
+    const userConcernMessages = messages.filter(
+      (message) =>
+        message.role === 'user' && CONCERN_MESSAGE_RE.test(message.content),
+    );
     if (!userConcernMessages.length) {
       return null;
     }
 
-    const concernText = userConcernMessages.slice(-2).map((message) => message.content).join('；');
+    const concernText = userConcernMessages
+      .slice(-2)
+      .map((message) => message.content)
+      .join('；');
     let userSummary = '';
 
-    if (/(累|劳累|疲惫)/.test(concernText) && /(时间紧|赶|空档|只够|最多|行程|3-4)/.test(concernText)) {
+    if (
+      /(累|劳累|疲惫)/.test(concernText) &&
+      /(时间紧|赶|空档|只够|最多|行程|3-4)/.test(concernText)
+    ) {
       userSummary = '用户顾虑对方已经较累且后续时间紧张，所以在邀约前反复犹豫';
     } else if (/(累|劳累|疲惫)/.test(concernText)) {
       userSummary = '用户顾虑对方已经较累，所以在邀约前反复犹豫';
@@ -1161,9 +1389,11 @@ export class DashscopeService {
       return null;
     }
 
-    const assistantSupport = messages.find((message) => (
-      message.role === 'assistant' && /(小图案|控制时长|时间紧|轻量|简单|休息|撤)/.test(message.content)
-    ));
+    const assistantSupport = messages.find(
+      (message) =>
+        message.role === 'assistant' &&
+        /(小图案|控制时长|时间紧|轻量|简单|休息|撤)/.test(message.content),
+    );
     const assistantSummary = assistantSupport
       ? '我把建议放在控制时长和降低安排负担上'
       : '我把建议放在降低安排负担上';
@@ -1175,11 +1405,15 @@ export class DashscopeService {
     raw: any,
     messages: ChatMessageInput[],
   ): CandidateImpressionDraft[] {
-    const rawCandidates = Array.isArray(raw?.candidate_impressions) ? raw.candidate_impressions : [];
+    const rawCandidates = Array.isArray(raw?.candidate_impressions)
+      ? raw.candidate_impressions
+      : [];
     const allowedIds = new Set(
       messages
         .map((message) => message.messageId)
-        .filter((messageId): messageId is number => Number.isInteger(messageId)),
+        .filter((messageId): messageId is number =>
+          Number.isInteger(messageId),
+        ),
     );
 
     const normalized = rawCandidates
@@ -1187,16 +1421,33 @@ export class DashscopeService {
         scene: sanitizeSceneText(item?.scene || ''),
         points: normalizePointCollection(item?.points, MAX_CANDIDATE_POINTS),
         entities: normalizeEntities(item?.entities),
-        retrievalText: sanitizeGeneratedText(item?.retrievalText || '', MAX_RETRIEVAL_CHARS),
-        evidenceMessageIds: normalizeEvidenceMessageIds(item?.evidenceMessageIds, allowedIds),
+        retrievalText: sanitizeGeneratedText(
+          item?.retrievalText || '',
+          MAX_RETRIEVAL_CHARS,
+        ),
+        evidenceMessageIds: normalizeEvidenceMessageIds(
+          item?.evidenceMessageIds,
+          allowedIds,
+        ),
       }))
       .map((item) => ({
         ...item,
-        retrievalText: buildStructuredRetrievalText(item.scene, item.points, item.entities)
-          || item.retrievalText
-          || buildFallbackRetrievalText(item.scene, item.points),
+        retrievalText:
+          buildStructuredRetrievalText(
+            item.scene,
+            item.points,
+            item.entities,
+          ) ||
+          item.retrievalText ||
+          buildFallbackRetrievalText(item.scene, item.points),
       }))
-      .filter((item) => item.scene && item.points.length && item.retrievalText && item.evidenceMessageIds.length);
+      .filter(
+        (item) =>
+          item.scene &&
+          item.points.length &&
+          item.retrievalText &&
+          item.evidenceMessageIds.length,
+      );
 
     if (!normalized.length && rawCandidates.length) {
       throw new Error('Empty candidate impressions');
@@ -1211,27 +1462,46 @@ export class DashscopeService {
   ): Node2PointGeneration {
     const rawItems = Array.isArray(raw)
       ? raw
-      : (Array.isArray(raw?.points) ? raw.points : []);
+      : Array.isArray(raw?.points)
+        ? raw.points
+        : [];
     const allowedSourceIds = new Set(oldPoints.map((point) => point.id));
-    const candidateAnalysis = normalizeText(
-      String(raw?.candidateAnalysis ?? raw?.candidate_analysis ?? ''),
-      MAX_RETRIEVAL_CHARS,
-    ) || null;
+    const candidateAnalysis =
+      normalizeText(
+        String(raw?.candidateAnalysis ?? raw?.candidate_analysis ?? ''),
+        MAX_RETRIEVAL_CHARS,
+      ) || null;
 
     const normalized = rawItems
       .map((item) => {
-        const op = ['new', 'supplement', 'revise', 'conflict'].includes(item?.op)
-          ? item.op as MemoryPointOp
+        const op = ['new', 'supplement', 'revise', 'conflict'].includes(
+          item?.op,
+        )
+          ? (item.op as MemoryPointOp)
           : 'new';
-        const sourcePointId = item?.sourcePointId ? String(item.sourcePointId) : null;
+        const sourcePointId = item?.sourcePointId
+          ? String(item.sourcePointId)
+          : null;
         const rawOpAnalysis = item?.opAnalysis ?? item?.op_analysis ?? '';
         return {
-          opAnalysis: normalizeText(String(rawOpAnalysis || ''), MAX_RETRIEVAL_CHARS),
+          opAnalysis: normalizeText(
+            String(rawOpAnalysis || ''),
+            MAX_RETRIEVAL_CHARS,
+          ),
           op,
-          sourcePointId: op === 'new' ? null : (sourcePointId && allowedSourceIds.has(sourcePointId) ? sourcePointId : null),
-          rewriteAnalysis: op === 'new'
-            ? null
-            : normalizeText(String(item?.rewriteAnalysis || ''), MAX_RETRIEVAL_CHARS),
+          sourcePointId:
+            op === 'new'
+              ? null
+              : sourcePointId && allowedSourceIds.has(sourcePointId)
+                ? sourcePointId
+                : null,
+          rewriteAnalysis:
+            op === 'new'
+              ? null
+              : normalizeText(
+                  String(item?.rewriteAnalysis || ''),
+                  MAX_RETRIEVAL_CHARS,
+                ),
           text: stabilizePointText(item?.text || ''),
         } satisfies Node2PointDraft;
       })
@@ -1259,7 +1529,8 @@ export class DashscopeService {
     const allowedLineIds = new Set(candidateLines.map((line) => line.id));
     const targetLineId = raw?.targetLineId ? String(raw.targetLineId) : null;
     return {
-      targetLineId: targetLineId && allowedLineIds.has(targetLineId) ? targetLineId : null,
+      targetLineId:
+        targetLineId && allowedLineIds.has(targetLineId) ? targetLineId : null,
     };
   }
 
@@ -1273,11 +1544,18 @@ export class DashscopeService {
       .map((group) => ({
         anchorLabel: sanitizeSceneText(group?.anchorLabel || ''),
         pointIndexes: Array.isArray(group?.pointIndexes)
-          ? Array.from(new Set(
-            group.pointIndexes
-              .map((index: unknown) => Number.parseInt(String(index), 10))
-              .filter((index: number) => Number.isInteger(index) && index >= 0 && index < pointTexts.length),
-          ))
+          ? Array.from(
+              new Set(
+                group.pointIndexes
+                  .map((index: unknown) => Number.parseInt(String(index), 10))
+                  .filter(
+                    (index: number) =>
+                      Number.isInteger(index) &&
+                      index >= 0 &&
+                      index < pointTexts.length,
+                  ),
+              ),
+            )
           : [],
       }))
       .map((group) => ({
@@ -1301,10 +1579,14 @@ export class DashscopeService {
       .filter((index) => !usedIndexes.has(index));
 
     if (uncovered.length) {
-      groups.push(...uncovered.map((index) => ({
-        anchorLabel: sanitizeSceneText(pointTexts[index].slice(0, 24) || `新主线 ${index + 1}`),
-        pointIndexes: [index],
-      })));
+      groups.push(
+        ...uncovered.map((index) => ({
+          anchorLabel: sanitizeSceneText(
+            pointTexts[index].slice(0, 24) || `新主线 ${index + 1}`,
+          ),
+          pointIndexes: [index],
+        })),
+      );
     }
 
     return { newLines: groups };
@@ -1315,33 +1597,57 @@ export class DashscopeService {
     anchorLabel: string,
     leafPoints: string[],
   ): LineImpressionDraft {
-    const impressionLabel = sanitizeSceneText(raw?.impressionLabel || anchorLabel);
-    const impressionAbstract = sanitizeGeneratedText(raw?.impressionAbstract || '', MAX_RETRIEVAL_CHARS);
+    const impressionLabel = sanitizeSceneText(
+      raw?.impressionLabel || anchorLabel,
+    );
+    const impressionAbstract = sanitizeGeneratedText(
+      raw?.impressionAbstract || '',
+      MAX_RETRIEVAL_CHARS,
+    );
 
     if (!impressionLabel && !impressionAbstract) {
       return this.createFallbackLineImpression(anchorLabel, leafPoints);
     }
 
     return {
-      impressionLabel: impressionLabel || sanitizeSceneText(anchorLabel || '聊当前对话场景'),
-      impressionAbstract: impressionAbstract || this.createFallbackLineImpression(anchorLabel, leafPoints).impressionAbstract,
+      impressionLabel:
+        impressionLabel || sanitizeSceneText(anchorLabel || '聊当前对话场景'),
+      impressionAbstract:
+        impressionAbstract ||
+        this.createFallbackLineImpression(anchorLabel, leafPoints)
+          .impressionAbstract,
     };
   }
 
-  private createFallbackRetrievalDrafts(messages: ChatMessageInput[]): RetrievalDrafts {
-    const historyMessages = messages.filter((message) => message.isNew === false);
+  private createFallbackRetrievalDrafts(
+    messages: ChatMessageInput[],
+  ): RetrievalDrafts {
+    const historyMessages = messages.filter(
+      (message) => message.isNew === false,
+    );
     const newMessages = messages.filter((message) => message.isNew !== false);
     const scene = buildFallbackScene(messages);
     const mergedContext = [
       ...historyMessages.slice(-3).map((message) => message.content),
       ...newMessages.slice(-3).map((message) => message.content),
-    ].filter(Boolean).join('；');
+    ]
+      .filter(Boolean)
+      .join('；');
 
     return {
       historyRetrievalDraft: historyMessages.length
-        ? normalizeText(`${scene}，之前在聊：${historyMessages.slice(-4).map((message) => message.content).join('；')}`, MAX_RETRIEVAL_CHARS)
+        ? normalizeText(
+            `${scene}，之前在聊：${historyMessages
+              .slice(-4)
+              .map((message) => message.content)
+              .join('；')}`,
+            MAX_RETRIEVAL_CHARS,
+          )
         : scene,
-      deltaRetrievalDraft: normalizeText(`${scene}，这轮新增：${newMessages.map((message) => message.content).join('；')}`, MAX_RETRIEVAL_CHARS),
+      deltaRetrievalDraft: normalizeText(
+        `${scene}，这轮新增：${newMessages.map((message) => message.content).join('；')}`,
+        MAX_RETRIEVAL_CHARS,
+      ),
       mergedRetrievalDraft: normalizeText(
         mergedContext ? `${scene}，当前整体在聊：${mergedContext}` : scene,
         MAX_RETRIEVAL_CHARS,
@@ -1363,17 +1669,24 @@ export class DashscopeService {
       .filter((messageId): messageId is number => Number.isInteger(messageId))
       .slice(-4);
 
-    if (!scene || !points.length || !retrievalText || !evidenceMessageIds.length) {
+    if (
+      !scene ||
+      !points.length ||
+      !retrievalText ||
+      !evidenceMessageIds.length
+    ) {
       return [];
     }
 
-    return [{
-      scene,
-      points,
-      entities: [],
-      retrievalText,
-      evidenceMessageIds,
-    }];
+    return [
+      {
+        scene,
+        points,
+        entities: [],
+        retrievalText,
+        evidenceMessageIds,
+      },
+    ];
   }
 
   private createFallbackFinalImpressions(
@@ -1385,7 +1698,10 @@ export class DashscopeService {
     }
 
     return candidateImpressions.slice(0, 4).map((candidate) => ({
-      sourceImpressionId: oldImpressions.find((impression) => impression.scene === candidate.scene)?.id || null,
+      sourceImpressionId:
+        oldImpressions.find(
+          (impression) => impression.scene === candidate.scene,
+        )?.id || null,
       scene: candidate.scene,
       points: candidate.points,
       entities: candidate.entities,
@@ -1418,20 +1734,28 @@ export class DashscopeService {
   private createFallbackNewLinePlan(pointTexts: string[]): NewLinePlanDraft {
     return {
       newLines: pointTexts.map((pointText, index) => ({
-        anchorLabel: sanitizeSceneText(pointText.slice(0, 24) || `新主线 ${index + 1}`),
+        anchorLabel: sanitizeSceneText(
+          pointText.slice(0, 24) || `新主线 ${index + 1}`,
+        ),
         pointIndexes: [index],
       })),
     };
   }
 
-  private createFallbackLineImpression(anchorLabel: string, leafPoints: string[]): LineImpressionDraft {
-    const impressionLabel = sanitizeSceneText(anchorLabel || buildFallbackScene(
-      leafPoints.map((text, index) => ({
-        role: index === 0 ? 'user' : 'assistant',
-        content: text,
-        timestamp: new Date().toISOString(),
-      })),
-    ));
+  private createFallbackLineImpression(
+    anchorLabel: string,
+    leafPoints: string[],
+  ): LineImpressionDraft {
+    const impressionLabel = sanitizeSceneText(
+      anchorLabel ||
+        buildFallbackScene(
+          leafPoints.map((text, index) => ({
+            role: index === 0 ? 'user' : 'assistant',
+            content: text,
+            timestamp: new Date().toISOString(),
+          })),
+        ),
+    );
     const impressionAbstract = sanitizeGeneratedText(
       leafPoints
         .slice(0, 3)
@@ -1453,18 +1777,33 @@ export class DashscopeService {
   }): string {
     const { messages, recentActivatedImpressions = [] } = params;
     const newMessages = messages.filter((message) => message.isNew !== false);
-    const historyMessages = messages.filter((message) => message.isNew === false);
+    const historyMessages = messages.filter(
+      (message) => message.isNew === false,
+    );
 
     const historyText = historyMessages.length
-      ? historyMessages.map((message) => `[${message.role === 'user' ? '用户' : 'AI'}] ${message.content}`).join('\n')
+      ? historyMessages
+          .map(
+            (message) =>
+              `[${message.role === 'user' ? '用户' : 'AI'}] ${message.content}`,
+          )
+          .join('\n')
       : '(无历史消息)';
     const deltaText = newMessages.length
-      ? newMessages.map((message) => `[${message.role === 'user' ? '用户' : 'AI'}] ${message.content}`).join('\n')
+      ? newMessages
+          .map(
+            (message) =>
+              `[${message.role === 'user' ? '用户' : 'AI'}] ${message.content}`,
+          )
+          .join('\n')
       : '(无新消息)';
     const recentActivatedText = recentActivatedImpressions.length
-      ? recentActivatedImpressions.map((impression) => (
-        `- scene=${impression.scene}; points=${JSON.stringify(impression.points.slice(0, 2))}; entities=${JSON.stringify((impression.entities || []).slice(0, 6))}; lastActivatedAt=${impression.lastActivatedAt || impression.updatedAt || impression.createdAt || 'unknown'}`
-      )).join('\n')
+      ? recentActivatedImpressions
+          .map(
+            (impression) =>
+              `- scene=${impression.scene}; points=${JSON.stringify(impression.points.slice(0, 2))}; entities=${JSON.stringify((impression.entities || []).slice(0, 6))}; lastActivatedAt=${impression.lastActivatedAt || impression.updatedAt || impression.createdAt || 'unknown'}`,
+          )
+          .join('\n')
       : '(无最近激活 impressions 补充)';
 
     return `## 历史消息
@@ -1514,9 +1853,15 @@ ${deltaText}
     newMessages: ChatMessageInput[];
     oldImpressions: Impression[];
   }): string {
-    const historyMessagesText = stringifyPromptData(params.historyMessages.map(formatPromptMessage));
-    const newMessagesText = stringifyPromptData(params.newMessages.map(formatPromptMessage));
-    const oldImpressionsText = stringifyPromptData(params.oldImpressions.map(formatPromptImpression));
+    const historyMessagesText = stringifyPromptData(
+      params.historyMessages.map(formatPromptMessage),
+    );
+    const newMessagesText = stringifyPromptData(
+      params.newMessages.map(formatPromptMessage),
+    );
+    const oldImpressionsText = stringifyPromptData(
+      params.oldImpressions.map(formatPromptImpression),
+    );
 
     return `你是 Node1：候选印象重建器。
 
@@ -1825,10 +2170,18 @@ ${oldImpressionsText}`;
     oldImpressions: Impression[];
     candidateImpressions: CandidateImpressionDraft[];
   }): string {
-    const historyMessagesText = stringifyPromptData(params.historyMessages.map(formatPromptMessage));
-    const newMessagesText = stringifyPromptData(params.newMessages.map(formatPromptMessage));
-    const oldImpressionsText = stringifyPromptData(params.oldImpressions.map(formatPromptImpression));
-    const candidateImpressionsText = stringifyPromptData(params.candidateImpressions.map(formatPromptCandidate));
+    const historyMessagesText = stringifyPromptData(
+      params.historyMessages.map(formatPromptMessage),
+    );
+    const newMessagesText = stringifyPromptData(
+      params.newMessages.map(formatPromptMessage),
+    );
+    const oldImpressionsText = stringifyPromptData(
+      params.oldImpressions.map(formatPromptImpression),
+    );
+    const candidateImpressionsText = stringifyPromptData(
+      params.candidateImpressions.map(formatPromptCandidate),
+    );
 
     return `你是 Node2：印象对账与更新器。
 
@@ -2211,9 +2564,15 @@ ${candidateImpressionsText}`;
     newMessages: ChatMessageInput[];
     oldPoints: RetrievedMemoryPoint[];
   }): string {
-    const historyMessagesText = stringifyPromptData(params.historyMessages.map(formatPromptMessage));
-    const newMessagesText = stringifyPromptData(params.newMessages.map(formatPromptMessage));
-    const oldPointsText = stringifyPromptData(formatPromptGroupedOldPoints(params.oldPoints));
+    const historyMessagesText = stringifyPromptData(
+      params.historyMessages.map(formatPromptMessage),
+    );
+    const newMessagesText = stringifyPromptData(
+      params.newMessages.map(formatPromptMessage),
+    );
+    const oldPointsText = stringifyPromptData(
+      formatPromptGroupedOldPoints(params.oldPoints),
+    );
 
     return `# 角色
 你是聊天记忆系统的聊天印象生成器，你擅长从聊天对话和历史信息中提取出对未来有用的、高压缩但不失真的聊天印象 point。
@@ -2439,7 +2798,9 @@ rewriteAnalysis 不是泛泛解释，而是为了避免重写时丢失旧信息�
     pointText: string;
     candidateLines: MemoryLineCandidate[];
   }): string {
-    const candidateLinesText = stringifyPromptData(params.candidateLines.map(formatPromptLineCandidate));
+    const candidateLinesText = stringifyPromptData(
+      params.candidateLines.map(formatPromptLineCandidate),
+    );
 
     return `你是“归属已有 line”节点。
 
@@ -2461,9 +2822,7 @@ ${JSON.stringify(params.pointText)}
 ${candidateLinesText}`;
   }
 
-  private buildNewLinePlanPrompt(params: {
-    pointTexts: string[];
-  }): string {
+  private buildNewLinePlanPrompt(params: { pointTexts: string[] }): string {
     const pointsText = stringifyPromptData(
       params.pointTexts.map((pointText, index) => ({
         index,

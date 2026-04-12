@@ -194,7 +194,9 @@ export class UserProfileService {
       return (response.data.result || [])
         .map((point: any) => {
           const payload = point.payload || {};
-          const text = normalizeFieldValue(payload.retrievalText || payload.preference);
+          const text = normalizeFieldValue(
+            payload.retrievalText || payload.content || payload.preference,
+          );
           return text
             ? {
               text,

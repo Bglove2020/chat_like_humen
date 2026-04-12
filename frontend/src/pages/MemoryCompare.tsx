@@ -10,13 +10,6 @@ interface CustomMemory {
   score?: number;
 }
 
-interface Mem0Memory {
-  id?: string;
-  memory: string;
-  score: number | null;
-  metadata: Record<string, unknown>;
-}
-
 interface ProfileMemory {
   text: string;
   time: string;
@@ -43,7 +36,6 @@ export default function MemoryCompare() {
   const [query, setQuery] = useState('用户最近在聊什么');
   const [customResults, setCustomResults] = useState<CustomMemory[]>([]);
   const [profileResults, setProfileResults] = useState<ProfileMemory[]>([]);
-  const [mem0Results, setMem0Results] = useState<Mem0Memory[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -61,7 +53,6 @@ export default function MemoryCompare() {
       const response = await memoryCompareApi.search(userId, query.trim(), 6);
       setCustomResults(response.data.custom?.context || []);
       setProfileResults(response.data.profile?.preferences || []);
-      setMem0Results(response.data.mem0?.results || []);
     } catch (err) {
       console.error(err);
       setError('Search failed.');
@@ -155,28 +146,6 @@ export default function MemoryCompare() {
             </div>
           </div>
 
-          <div className="compare-column">
-            <div className="compare-column-header">
-              <h2>Mem0 Memories</h2>
-              <span>{mem0Results.length} results</span>
-            </div>
-            <div className="compare-result-list">
-              {mem0Results.length === 0 ? (
-                <p className="compare-empty">No Mem0 results.</p>
-              ) : mem0Results.map((item, index) => (
-                <article key={item.id || index} className="compare-result-card">
-                  <div className="compare-card-meta">
-                    <span>{item.id || 'No id'}</span>
-                    {formatScore(item.score) && <span>{formatScore(item.score)}</span>}
-                  </div>
-                  <h3>{item.memory}</h3>
-                  {Object.keys(item.metadata || {}).length > 0 && (
-                    <pre>{JSON.stringify(item.metadata, null, 2)}</pre>
-                  )}
-                </article>
-              ))}
-            </div>
-          </div>
         </section>
       </main>
     </div>

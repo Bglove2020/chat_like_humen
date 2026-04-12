@@ -6,10 +6,22 @@ describe('DashscopeService prompt builders', () => {
   it('builds candidate prompt with explicit history/new split', () => {
     const prompt = (service as any).buildCandidateImpressionPrompt({
       historyMessages: [
-        { messageId: 1, role: 'user', content: '昨天在聊早餐', timestamp: '2026-04-10T00:00:00.000Z', isNew: false },
+        {
+          messageId: 1,
+          role: 'user',
+          content: '昨天在聊早餐',
+          timestamp: '2026-04-10T00:00:00.000Z',
+          isNew: false,
+        },
       ],
       newMessages: [
-        { messageId: 2, role: 'assistant', content: '今天继续聊热水', timestamp: '2026-04-10T00:01:00.000Z', isNew: true },
+        {
+          messageId: 2,
+          role: 'assistant',
+          content: '今天继续聊热水',
+          timestamp: '2026-04-10T00:01:00.000Z',
+          isNew: true,
+        },
       ],
       oldImpressions: [
         {
@@ -35,7 +47,13 @@ describe('DashscopeService prompt builders', () => {
     const prompt = (service as any).buildReconcileImpressionPrompt({
       historyMessages: [],
       newMessages: [
-        { messageId: 2, role: 'assistant', content: '今天继续聊热水', timestamp: '2026-04-10T00:01:00.000Z', isNew: true },
+        {
+          messageId: 2,
+          role: 'assistant',
+          content: '今天继续聊热水',
+          timestamp: '2026-04-10T00:01:00.000Z',
+          isNew: true,
+        },
       ],
       oldImpressions: [],
       candidateImpressions: [
@@ -66,7 +84,8 @@ describe('DashscopeService prompt builders', () => {
             '多次祝福拼豆活动愉快。',
           ],
           entities: ['拼豆'],
-          retrievalText: 'assistant建议先各做各的，用户说他约对方是为了增进感情，还觉得这种说法像钢铁直男。',
+          retrievalText:
+            'assistant建议先各做各的，用户说他约对方是为了增进感情，还觉得这种说法像钢铁直男。',
         },
       ],
     });
@@ -74,7 +93,9 @@ describe('DashscopeService prompt builders', () => {
     expect(normalized).toHaveLength(1);
     expect(normalized[0].scene).toBe('聊约前同事拼豆');
     expect(normalized[0].points.join(' ')).toContain('增进感情');
-    expect(normalized[0].points.join(' ')).toContain('不接受把这件事理解成低互动安排');
+    expect(normalized[0].points.join(' ')).toContain(
+      '不接受把这件事理解成低互动安排',
+    );
     expect(normalized[0].points.join(' ')).toContain('只能各自独立完成');
     expect(normalized[0].points.join(' ')).toContain('过程中自然聊天');
     expect(normalized[0].points.join(' ')).not.toContain('assistant');
@@ -112,7 +133,9 @@ describe('DashscopeService prompt builders', () => {
         {
           id: 'leaf-1',
           scene: '聊约前同事去拼豆',
-          points: ['用户因担心前同事劳累及后续行程紧凑而犹豫邀约，并说明约前同事拼豆是为了增进感情'],
+          points: [
+            '用户因担心前同事劳累及后续行程紧凑而犹豫邀约，并说明约前同事拼豆是为了增进感情',
+          ],
           entities: ['前同事', '拼豆', '增进感情', '时间顾虑'],
           retrievalText: '聊约前同事去拼豆',
           content: '',
@@ -125,5 +148,94 @@ describe('DashscopeService prompt builders', () => {
     );
 
     expect(selected?.id).toBe('leaf-1');
+  });
+
+  it('enables thinking for active node2 pipeline calls', async () => {
+    const spy = jest
+      .spyOn(service as any, 'callQwenJson')
+      .mockResolvedValueOnce({
+        points: [
+          {
+            op: 'new',
+            sourcePointId: null,
+            text: '用户提到最近准备恢复晨跑',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ targetLineId: null })
+      .mockResolvedValueOnce({ newLines: [] })
+      .mockResolvedValueOnce({
+        impressionLabel: '聊恢复晨跑计划',
+        impressionAbstract: '用户最近准备恢复晨跑，并讨论节奏安排',
+      });
+
+    await service.generateNode2Points({
+      historyMessages: [],
+      newMessages: [
+        {
+          messageId: 1,
+          role: 'user',
+          content: '我最近准备恢复晨跑',
+          timestamp: '2026-04-10T00:00:00.000Z',
+          isNew: true,
+        },
+      ],
+      oldPoints: [],
+    });
+    await service.attachPointToExistingLine({
+      pointText: '用户最近准备恢复晨跑',
+      candidateLines: [
+        {
+          id: 'line-1',
+          anchorLabel: '聊跑步',
+          impressionLabel: '聊跑步安排',
+          impressionAbstract: '用户之前聊过跑步习惯',
+          salienceScore: 0.8,
+          lastActivatedAt: '2026-04-10T00:00:00.000Z',
+        },
+      ],
+    });
+    await service.planNewLines({
+      pointTexts: ['用户最近准备恢复晨跑'],
+    });
+    await service.rebuildLineImpression({
+      anchorLabel: '聊恢复晨跑',
+      leafPoints: ['用户最近准备恢复晨跑，并讨论节奏安排'],
+    });
+
+    expect(spy).toHaveBeenCalledTimes(4);
+    expect(spy.mock.calls[0][2]).toEqual({ enableThinking: true });
+    expect(spy.mock.calls[1][2]).toEqual({ enableThinking: true });
+    expect(spy.mock.calls[2][2]).toEqual({ enableThinking: true });
+    expect(spy.mock.calls[3][2]).toEqual({ enableThinking: true });
+
+    spy.mockRestore();
+  });
+
+  it('enables thinking for node1 retrieval drafts', async () => {
+    const spy = jest
+      .spyOn(service as any, 'callQwenJson')
+      .mockResolvedValueOnce({
+        historyRetrievalDraft: '聊早餐',
+        deltaRetrievalDraft: '今天新增热水',
+        mergedRetrievalDraft: '聊早餐和热水',
+      });
+
+    await service.generateRetrievalDrafts({
+      messages: [
+        {
+          messageId: 1,
+          role: 'user',
+          content: '昨天聊早餐，今天聊热水',
+          timestamp: '2026-04-10T00:00:00.000Z',
+          isNew: true,
+        },
+      ],
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][2]).toEqual({ enableThinking: true });
+
+    spy.mockRestore();
   });
 });

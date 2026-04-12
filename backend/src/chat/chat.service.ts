@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, OnModuleDestroy } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import http from 'http';
 import https from 'https';
@@ -63,7 +67,8 @@ export class ChatService implements OnModuleDestroy {
   }
 
   async listSessions(userId: number) {
-    const defaultSession = await this.chatSessionService.getLatestSession(userId);
+    const defaultSession =
+      await this.chatSessionService.getLatestSession(userId);
     return defaultSession ? [defaultSession] : [];
   }
 
@@ -72,12 +77,18 @@ export class ChatService implements OnModuleDestroy {
   }
 
   async getSessionMessages(userId: number, sessionId: string) {
-    const chatSession = await this.chatSessionService.getOrCreateDefaultSession(userId);
+    const chatSession =
+      await this.chatSessionService.getOrCreateDefaultSession(userId);
     if (sessionId !== chatSession.id) {
-      throw new ForbiddenException('Only the default chat session is available');
+      throw new ForbiddenException(
+        'Only the default chat session is available',
+      );
     }
 
-    const messages = await this.chatMessageService.getSessionMessages(userId, chatSession.id);
+    const messages = await this.chatMessageService.getSessionMessages(
+      userId,
+      chatSession.id,
+    );
     return {
       sessionId: chatSession.id,
       messages: messages.map((message) => ({
@@ -91,10 +102,15 @@ export class ChatService implements OnModuleDestroy {
 
   async deleteSession(userId: number, sessionId: string): Promise<void> {
     await this.chatSessionService.getOwnedSession(userId, sessionId);
-    throw new ForbiddenException('Deleting the default chat session is disabled');
+    throw new ForbiddenException(
+      'Deleting the default chat session is disabled',
+    );
   }
 
-  private getOrCreateRuntimeSession(userId: number, sessionId: string): RuntimeSession {
+  private getOrCreateRuntimeSession(
+    userId: number,
+    sessionId: string,
+  ): RuntimeSession {
     if (!this.sessions.has(sessionId)) {
       this.sessions.set(sessionId, {
         userId,
@@ -111,16 +127,27 @@ export class ChatService implements OnModuleDestroy {
     message: string,
     sessionId?: string,
   ): Promise<{ reply: string; sessionId: string; title: string }> {
-    let chatSession = await this.chatSessionService.getOrCreateDefaultSession(userId);
+    let chatSession =
+      await this.chatSessionService.getOrCreateDefaultSession(userId);
     if (sessionId && sessionId !== chatSession.id) {
-      throw new ForbiddenException('Only the default chat session is available');
+      throw new ForbiddenException(
+        'Only the default chat session is available',
+      );
     }
 
-    chatSession = await this.chatSessionService.maybeAssignTitle(chatSession, message);
+    chatSession = await this.chatSessionService.maybeAssignTitle(
+      chatSession,
+      message,
+    );
     const session = this.getOrCreateRuntimeSession(userId, chatSession.id);
 
     // Store user message in DB
-    const savedUserMessage = await this.chatMessageService.saveMessage(userId, chatSession.id, 'user', message);
+    const savedUserMessage = await this.chatMessageService.saveMessage(
+      userId,
+      chatSession.id,
+      'user',
+      message,
+    );
 
     // Also keep in memory for batch
     session.messages.push({
@@ -131,7 +158,11 @@ export class ChatService implements OnModuleDestroy {
     });
 
     // Call Dify API (blocking mode)
-    const difyResponse = await this.callDify(userId, message, chatSession.difyConversationId);
+    const difyResponse = await this.callDify(
+      userId,
+      message,
+      chatSession.difyConversationId,
+    );
 
     if (difyResponse.conversationId) {
       chatSession = await this.chatSessionService.updateConversationId(
@@ -185,9 +216,13 @@ export class ChatService implements OnModuleDestroy {
 
     // Only append NEW session messages (those not yet in buffer)
     // Use a Set of timestamps to track what's already buffered
-    const existingMessageIds = new Set(buffer.messages.map((message) => message.messageId));
+    const existingMessageIds = new Set(
+      buffer.messages.map((message) => message.messageId),
+    );
 
-    const newMsgs = session.messages.filter((message) => !existingMessageIds.has(message.messageId));
+    const newMsgs = session.messages.filter(
+      (message) => !existingMessageIds.has(message.messageId),
+    );
 
     buffer.messages.push(...newMsgs);
     session.messages = [];
@@ -228,7 +263,8 @@ export class ChatService implements OnModuleDestroy {
       messages.map((m) => ({
         role: m.role,
         content: m.content,
-        timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
+        timestamp:
+          m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
         messageId: m.messageId,
         isNew: true,
       })),
@@ -236,7 +272,9 @@ export class ChatService implements OnModuleDestroy {
 
     try {
       await this.enqueueFlushJobs(buffer.userId, buffer.sessionId, allMessages);
-      console.log(`[Buffer] Flushed ${messages.length} messages for user ${buffer.userId}, session ${buffer.sessionId} (total with history: ${allMessages.length})`);
+      console.log(
+        `[Buffer] Flushed ${messages.length} messages for user ${buffer.userId}, session ${buffer.sessionId} (total with history: ${allMessages.length})`,
+      );
     } catch (error: any) {
       console.error('[Buffer] Failed to flush:', error?.message);
     }
@@ -250,7 +288,8 @@ export class ChatService implements OnModuleDestroy {
     return new Promise((resolve) => {
       const apiUrl = this.configService.get<string>('dify.apiUrl')!;
       const apiKey = this.configService.get<string>('dify.apiKey')!;
-      const timeoutMs = this.configService.get<number>('dify.timeoutMs') || 60000;
+      const timeoutMs =
+        this.configService.get<number>('dify.timeoutMs') || 60000;
 
       const urlObj = new URL(apiUrl);
       const isHttps = urlObj.protocol === 'https:';
@@ -276,7 +315,7 @@ export class ChatService implements OnModuleDestroy {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Length': Buffer.byteLength(postData),
         },
         timeout: timeoutMs,
@@ -347,26 +386,38 @@ export class ChatService implements OnModuleDestroy {
     const session = this.sessions.get(sessionId);
     if (!session || session.messages.length === 0) return;
 
-    const sessionMsgs: SummaryQueueMessage[] = session.messages.map(m => ({
+    const sessionMsgs: SummaryQueueMessage[] = session.messages.map((m) => ({
       messageId: m.messageId,
       role: m.role,
       content: m.content,
-      timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
+      timestamp:
+        m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
       isNew: true,
     }));
     session.messages = [];
 
-    const messages = await this.buildSummaryPayload(session.userId, session.sessionId, sessionMsgs);
+    const messages = await this.buildSummaryPayload(
+      session.userId,
+      session.sessionId,
+      sessionMsgs,
+    );
     await this.enqueueFlushJobs(session.userId, session.sessionId, messages);
   }
 
-  private extractFactMessages(messages: SummaryQueueMessage[]): FactJobData['messages'] {
+  private extractFactMessages(
+    messages: SummaryQueueMessage[],
+  ): FactJobData['messages'] {
     return messages
       .filter((message) => message.isNew !== false)
-      .filter((message) => message.role === 'user')
+      .filter(
+        (message) => message.role === 'user' || message.role === 'assistant',
+      )
       .map((message) => ({
         messageId: message.messageId,
-        role: 'user' as const,
+        role:
+          message.role === 'assistant'
+            ? ('assistant' as const)
+            : ('user' as const),
         content: message.content,
         timestamp: message.timestamp,
       }))
@@ -378,28 +429,25 @@ export class ChatService implements OnModuleDestroy {
     sessionId: string | undefined,
     messages: SummaryQueueMessage[],
   ): Promise<void> {
-    const summaryBatch = await this.queueService.enqueueSummaryBatch(userId, sessionId, messages);
+    const summaryBatch = await this.queueService.enqueueSummaryBatch(
+      userId,
+      sessionId,
+      messages,
+    );
     const factMessages = this.extractFactMessages(messages);
 
     if (factMessages.length) {
       try {
-        await this.queueService.enqueueFactBatch(userId, summaryBatch.batchId, factMessages);
+        await this.queueService.enqueueFactBatch(
+          userId,
+          summaryBatch.batchId,
+          factMessages,
+        );
       } catch (error: any) {
         console.error('[Buffer] Failed to enqueue fact job:', error?.message);
       }
     }
 
-    try {
-      await this.queueService.enqueueMem0Batch(
-        userId,
-        sessionId,
-        messages,
-        summaryBatch.batchId,
-        summaryBatch.date,
-      );
-    } catch (error: any) {
-      console.error('[Buffer] Failed to enqueue Mem0 sidecar job:', error?.message);
-    }
   }
 
   private async buildSummaryPayload(
@@ -407,35 +455,43 @@ export class ChatService implements OnModuleDestroy {
     chatSessionId: string,
     newMessages: SummaryQueueMessage[],
   ): Promise<SummaryQueueMessage[]> {
-    if (newMessages.length >= 15) {
-      return newMessages.slice(-15);
-    }
+    const historyTarget = 15;
+    const dbFetchLimit = historyTarget + Math.max(0, newMessages.length);
 
-    const dbMessages = await this.chatMessageService.getRecentMessages(userId, 15, chatSessionId);
-    const historicalMessages: SummaryQueueMessage[] = dbMessages.map((m) => ({
-      messageId: m.id,
-      role: m.role,
-      content: m.content,
-      timestamp: m.createdAt.toISOString(),
-      isNew: false,
-    })).reverse();
+    const dbMessages = await this.chatMessageService.getRecentMessages(
+      userId,
+      dbFetchLimit,
+      chatSessionId,
+    );
+    const historicalMessages: SummaryQueueMessage[] = dbMessages
+      .map((m) => ({
+        messageId: m.id,
+        role: m.role,
+        content: m.content,
+        timestamp: m.createdAt.toISOString(),
+        isNew: false,
+      }))
+      .reverse();
 
     // Always keep the current flush as the authoritative "new" segment.
     // DB timestamps can be normalized differently from in-memory timestamps,
     // so we prepend only the non-duplicate historical context we still need.
     const newMessageKeys = new Set(
-      newMessages.map((message) => message.messageId ? `id:${message.messageId}` : `${message.role}:${message.content}`),
-    );
-    const historicalContext = historicalMessages.filter(
-      (message) => !newMessageKeys.has(
-        message.messageId ? `id:${message.messageId}` : `${message.role}:${message.content}`,
+      newMessages.map((message) =>
+        message.messageId
+          ? `id:${message.messageId}`
+          : `${message.role}:${message.content}`,
       ),
     );
+    const historicalContext = historicalMessages.filter(
+      (message) =>
+        !newMessageKeys.has(
+          message.messageId
+            ? `id:${message.messageId}`
+            : `${message.role}:${message.content}`,
+        ),
+    );
 
-    const historyLimit = Math.max(0, 15 - newMessages.length);
-    return [
-      ...historicalContext.slice(-historyLimit),
-      ...newMessages,
-    ].slice(-15);
+    return [...historicalContext.slice(-historyTarget), ...newMessages];
   }
 }

@@ -24,9 +24,6 @@ import { QueueService } from './queue.service';
       {
         name: 'chat-fact-queue',
       },
-      {
-        name: 'chat-mem0-queue',
-      },
     ),
   ],
   providers: [QueueService],

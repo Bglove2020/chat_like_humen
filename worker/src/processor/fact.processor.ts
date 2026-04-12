@@ -2,7 +2,10 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { FactExtractionService, FactMessageInput } from '../services/fact-extraction.service';
+import {
+  FactExtractionService,
+  FactMessageInput,
+} from '../services/fact-extraction.service';
 import { UserProfileMemoryService } from '../services/user-profile-memory.service';
 
 export interface FactJobData {
@@ -11,7 +14,10 @@ export interface FactJobData {
   messages: FactMessageInput[];
 }
 
-const FACT_WORKER_CONCURRENCY = parseInt(process.env.FACT_WORKER_CONCURRENCY || process.env.WORKER_CONCURRENCY || '5', 10);
+const FACT_WORKER_CONCURRENCY = parseInt(
+  process.env.FACT_WORKER_CONCURRENCY || process.env.WORKER_CONCURRENCY || '5',
+  10,
+);
 
 @Processor('chat-fact-queue', { concurrency: FACT_WORKER_CONCURRENCY })
 export class FactProcessor extends WorkerHost {
@@ -26,12 +32,18 @@ export class FactProcessor extends WorkerHost {
   async process(job: Job<FactJobData>): Promise<void> {
     const { userId, batchId } = job.data;
     const messages = (job.data.messages || [])
-      .filter((message) => message.role === 'user')
+      .filter(
+        (message) => message.role === 'user' || message.role === 'assistant',
+      )
       .filter((message) => String(message.content || '').trim());
+    const userMessages = messages.filter((message) => message.role === 'user');
 
-    console.log(`[FactProcessor] Received job ${job.id} (batchId: ${batchId}) for user ${userId}, userMessages=${messages.length}`);
+    console.log(
+      `[FactProcessor] Received job ${job.id} (batchId: ${batchId}) for user ${userId}, ` +
+        `messages=${messages.length}, userMessages=${userMessages.length}`,
+    );
 
-    if (!messages.length) {
+    if (!userMessages.length) {
       return;
     }
 
@@ -39,19 +51,24 @@ export class FactProcessor extends WorkerHost {
     const fixedFieldCount = Object.keys(extraction.structuredProfile).length;
 
     if (fixedFieldCount > 0) {
-      await this.upsertStructuredProfile(userId, batchId, extraction.structuredProfile);
+      await this.upsertStructuredProfile(
+        userId,
+        batchId,
+        extraction.structuredProfile,
+      );
     }
 
     const memoryStats = await this.userProfileMemoryService.reconcileAndPersist(
       userId,
       batchId,
+      messages,
       extraction.preferenceMemories,
     );
 
     console.log(
       `[FactProcessor] Finished batch ${batchId}: fixedFields=${fixedFieldCount}, ` +
-      `preferenceCandidates=${memoryStats.candidates}, created=${memoryStats.created}, ` +
-      `updated=${memoryStats.updated}, superseded=${memoryStats.superseded}, discarded=${memoryStats.discarded}`,
+        `preferenceCandidates=${memoryStats.candidates}, created=${memoryStats.created}, ` +
+        `covered=${memoryStats.covered}, discarded=${memoryStats.discarded}`,
     );
   }
 
@@ -60,12 +77,17 @@ export class FactProcessor extends WorkerHost {
     batchId: string,
     fields: Record<string, string>,
   ): Promise<void> {
-    const backendInternalUrl = this.configService.get<string>('backend.internalUrl')!;
+    const backendInternalUrl = this.configService.get<string>(
+      'backend.internalUrl',
+    )!;
 
-    await axios.post(`${backendInternalUrl}/api/internal/user-profiles/upsert`, {
-      userId,
-      batchId,
-      fields,
-    });
+    await axios.post(
+      `${backendInternalUrl}/api/internal/user-profiles/upsert`,
+      {
+        userId,
+        batchId,
+        fields,
+      },
+    );
   }
 }

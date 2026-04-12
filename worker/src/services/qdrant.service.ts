@@ -722,7 +722,10 @@ export class QdrantService {
       params.pointDrafts
         .filter((draft) => draft.op === 'new' && !draft.sourcePointId)
         .map(async (draft) => {
-          const candidateLines = await this.recallCandidateLines(params.userId, draft.text);
+          const candidateLines = await this.recallCandidateLines(
+            params.userId,
+            draft.text,
+          );
           const route = await this.dashscopeService.attachPointToExistingLine({
             pointText: draft.text,
             candidateLines,
@@ -740,12 +743,14 @@ export class QdrantService {
 
       let line = lineCache.get(result.route.targetLineId);
       if (!line) {
-        const matched = result.candidateLines.find((candidate) => candidate.id === result.route.targetLineId);
+        const matched = result.candidateLines.find(
+          (candidate) => candidate.id === result.route.targetLineId,
+        );
         line = matched
           ? {
-            ...matched,
-            impressionVersion: 1,
-          }
+              ...matched,
+              impressionVersion: 1,
+            }
           : (await this.getLinesByIds([result.route.targetLineId]))[0];
         if (line) {
           lineCache.set(line.id, line);

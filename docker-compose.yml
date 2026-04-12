@@ -47,24 +47,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-  mem0:
-    image: mem0/mem0-api-server:latest
-    container_name: emotion-agent-mem0
-    profiles:
-      - mem0
-    restart: always
-    ports:
-      - "8000:8000"
-    environment:
-      ADMIN_API_KEY: ${MEM0_API_KEY:-}
-      OPENAI_API_KEY: ${MEM0_LLM_API_KEY:-}
-      HISTORY_DB_PATH: /app/history/history.db
-    volumes:
-      - ./mem0_history:/app/history:z
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
