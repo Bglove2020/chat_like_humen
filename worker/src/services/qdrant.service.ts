@@ -1,22 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { randomUUID } from 'crypto';
 import {
   ChatMessageInput,
   DashscopeService,
-  FinalImpressionDraft,
-  Impression,
+  LineImpressionDraft,
+  MemoryLineCandidate,
+  MemoryPointOp,
+  Node2PointDraft,
+  RetrievedMemoryPoint,
   RetrievalDrafts,
 } from './dashscope.service';
 import {
   bumpSalienceScore,
   computeEffectiveScore,
-  dedupeByAncestorChain,
-  dedupeByIdKeepBest,
   INITIAL_SALIENCE_SCORE,
-  normalizeOriginType,
-  shouldUpdateExistingImpression,
 } from './impression-logic.util';
 
 export interface ChatMessage extends ChatMessageInput {}
@@ -29,120 +27,91 @@ export interface SummaryJobData {
   messages: ChatMessage[];
 }
 
-type OriginType = 'standalone' | 'continued';
-type DraftKind = 'history' | 'delta' | 'merged' | 'recent';
-
-interface UpsertImpressionParams {
-  impressionId?: string;
-  userId: number;
-  sessionId?: string;
-  date: string;
-  scene: string;
-  points: string[];
-  entities?: string[];
-  retrievalText: string;
-  action: 'create' | 'update';
-  existingImpression?: Impression;
-  originType?: OriginType;
-  sourceImpressionId?: string | null;
-  rootImpressionId?: string | null;
+interface BackendLineRecord extends MemoryLineCandidate {
+  userId?: number;
+  sessionId?: string | null;
+  impressionVersion?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
+
+interface BackendPointRecord {
+  id: string;
+  userId: number;
+  sessionId: string | null;
+  lineId: string;
+  op: MemoryPointOp;
+  sourcePointId: string | null;
+  text: string;
+  memoryDate: string;
+  salienceScore: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface CandidateLineAccumulator extends MemoryLineCandidate {
+  recallScore: number;
+  sourceKinds: Set<'recent' | 'keyword' | 'vector'>;
+}
+
+type DraftKind = 'history' | 'delta' | 'merged';
 
 interface RecallBucket {
   kind: DraftKind;
   query: string;
-  impressions: Impression[];
+  points: RetrievedMemoryPoint[];
 }
 
-interface Node1RecentRerankBreakdown {
-  impression: Impression;
-  semanticScore: number;
-  anchorCoverage: number;
-  normalizedSalienceScore: number;
-  rerankScore: number;
-  impressionAnchors: string[];
+interface QdrantLeafPayload {
+  userId: number;
+  sessionId: string | null;
+  lineId: string;
+  op: MemoryPointOp;
+  sourcePointId: string | null;
+  text: string;
+  memoryDate: string;
+  salienceScore: number;
+  createdAt: string;
+  updatedAt: string;
+  anchorLabel: string;
+  impressionLabel: string;
+  impressionAbstract: string;
+  impressionVersion: number;
+  lineSalienceScore: number;
+  lineLastActivatedAt: string;
+  lineCreatedAt: string;
+  lineUpdatedAt: string;
 }
 
 const DRAFT_WEIGHTS: Record<DraftKind, number> = {
   merged: 1,
   delta: 0.8,
   history: 0.6,
-  recent: 0.25,
 };
 
-const NODE1_RERANK_WEIGHTS = {
-  semantic: 0.55,
-  anchor: 0.25,
-  salience: 0.2,
-} as const;
+const QUERY_RECALL_LIMIT = 8;
+const FINAL_RECALL_LIMIT = 8;
+const CANDIDATE_LINE_LIMIT = 8;
+const RECENT_LINE_LIMIT = 10;
+const KEYWORD_LINE_LIMIT = 10;
 
-const ANCHOR_STOPWORDS = new Set([
-  '用户',
-  'AI',
-  '我们',
-  '你们',
-  '他们',
-  '这个',
-  '那个',
-  '这些',
-  '那些',
-  '现在',
-  '之前',
-  '还是',
-  '然后',
-  '就是',
-  '因为',
-  '所以',
-  '如果',
-  '已经',
-  '可以',
-  '一下',
-  '一个',
-  '一种',
-  '一些',
-  '问题',
-  '事情',
-  '情况',
-  '内容',
-  '话题',
-  '聊天',
-  '对话',
-  '感觉',
-  '觉得',
-  '时候',
-  '东西',
-]);
-
-function normalizeScene(scene: string): string {
-  return String(scene || '').replace(/\s+/g, ' ').trim().substring(0, 60);
+function normalizeText(value: string, maxLength: number): string {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
-function normalizePoints(points: string[]): string[] {
-  return Array.from(new Set(
-    (points || [])
-      .map((point) => String(point || '').replace(/\s+/g, ' ').trim().substring(0, 180))
-      .filter(Boolean),
-  )).slice(0, 6);
-}
-
-function normalizeRetrievalText(text: string): string {
-  return String(text || '').replace(/\s+/g, ' ').trim().substring(0, 360);
-}
-
-function composeLegacyContent(scene: string, points: string[]): string {
-  const normalizedScene = normalizeScene(scene);
-  const normalizedPoints = normalizePoints(points);
-  return [normalizedScene, ...normalizedPoints.map((point) => `- ${point}`)].join('\n');
+function buildLineCandidate(line: BackendLineRecord): MemoryLineCandidate {
+  return {
+    id: line.id,
+    anchorLabel: normalizeText(line.anchorLabel || '', 120),
+    impressionLabel: normalizeText(line.impressionLabel || line.anchorLabel || '', 120),
+    impressionAbstract: normalizeText(line.impressionAbstract || '', 360),
+    salienceScore: Number(line.salienceScore || INITIAL_SALIENCE_SCORE),
+    lastActivatedAt: line.lastActivatedAt || line.updatedAt || line.createdAt || new Date().toISOString(),
+  };
 }
 
 @Injectable()
 export class QdrantService {
-  private static readonly NODE1_RECENT_CANDIDATE_LIMIT = 10;
-  private static readonly RECENT_IMPRESSION_SCAN_LIMIT = 1000;
-  private static readonly NODE1_RECENT_SUPPORT_LIMIT = 6;
-  private static readonly QUERY_RECALL_LIMIT = 8;
-  private static readonly FINAL_RECALL_LIMIT = 6;
-
   constructor(
     private configService: ConfigService,
     private dashscopeService: DashscopeService,
@@ -164,47 +133,32 @@ export class QdrantService {
     return this.configService.get<number>('dashscope.embeddingDim')!;
   }
 
-  private sortByActivity(impressions: Impression[]): Impression[] {
-    return [...impressions].sort((left, right) => {
-      const leftTime = new Date(
-        left.lastActivatedAt || left.updatedAt || left.createdAt,
-      ).getTime();
-      const rightTime = new Date(
-        right.lastActivatedAt || right.updatedAt || right.createdAt,
-      ).getTime();
-      return rightTime - leftTime;
+  private mapPointHit(point: any): RetrievedMemoryPoint {
+    const payload = (point?.payload || {}) as Partial<QdrantLeafPayload>;
+    const line = buildLineCandidate({
+      id: String(payload.lineId || ''),
+      anchorLabel: String(payload.anchorLabel || ''),
+      impressionLabel: String(payload.impressionLabel || payload.anchorLabel || ''),
+      impressionAbstract: String(payload.impressionAbstract || ''),
+      salienceScore: Number(payload.lineSalienceScore || payload.salienceScore || INITIAL_SALIENCE_SCORE),
+      lastActivatedAt: String(payload.lineLastActivatedAt || payload.updatedAt || payload.createdAt || ''),
     });
-  }
-
-  private mapPointToImpression(point: any): Impression {
-    const payload = point.payload || {};
-    const memoryDate = payload.memoryDate || payload.date || '';
-    const scene = normalizeScene(payload.scene || '');
-    const points = normalizePoints(Array.isArray(payload.points) ? payload.points : []);
-    const entities = Array.isArray(payload.entities)
-      ? payload.entities.map((item: unknown) => String(item || '').trim()).filter(Boolean).slice(0, 8)
-      : [];
-    const retrievalText = normalizeRetrievalText(
-      payload.retrievalText || payload.content || composeLegacyContent(scene, points),
-    );
 
     return {
       id: String(point.id),
-      scene,
-      points,
-      entities,
-      retrievalText,
-      content: payload.content || composeLegacyContent(scene, points),
-      createdAt: payload.createdAt || '',
-      updatedAt: payload.updatedAt || '',
-      sessionId: payload.sessionId || null,
-      memoryDate,
-      relevanceScore: point.score || payload.relevanceScore || 0,
-      sourceImpressionId: payload.sourceImpressionId || null,
-      rootImpressionId: payload.rootImpressionId || String(point.id),
-      originType: normalizeOriginType(payload.originType),
+      lineId: String(payload.lineId || ''),
+      op: ['new', 'supplement', 'revise', 'conflict'].includes(String(payload.op))
+        ? payload.op as MemoryPointOp
+        : 'new',
+      sourcePointId: payload.sourcePointId ? String(payload.sourcePointId) : null,
+      text: normalizeText(String(payload.text || ''), 220),
+      memoryDate: String(payload.memoryDate || ''),
       salienceScore: Number(payload.salienceScore || INITIAL_SALIENCE_SCORE),
-      lastActivatedAt: payload.lastActivatedAt || payload.updatedAt || payload.createdAt || '',
+      createdAt: String(payload.createdAt || ''),
+      updatedAt: String(payload.updatedAt || ''),
+      sessionId: payload.sessionId ? String(payload.sessionId) : null,
+      relevanceScore: Number(point.score || 0),
+      line,
     };
   }
 
@@ -215,7 +169,6 @@ export class QdrantService {
 
     try {
       await axios.get(`${qdrantUrl}/collections/${collection}`);
-      console.log(`[Qdrant] Collection "${collection}" already exists`);
     } catch {
       await axios.put(`${qdrantUrl}/collections/${collection}`, {
         vectors: {
@@ -227,586 +180,411 @@ export class QdrantService {
     }
   }
 
-  private async getRecentImpressions(userId: number, limit: number): Promise<Impression[]> {
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-    const scanLimit = Math.max(limit, QdrantService.RECENT_IMPRESSION_SCAN_LIMIT);
-
-    try {
-      const response = await axios.post(
-        `${qdrantUrl}/collections/${collection}/points/scroll`,
-        {
-          limit: scanLimit,
-          with_payload: true,
-          filter: {
-            must: [
-              {
-                key: 'userId',
-                match: { value: userId },
-              },
-            ],
-          },
-        },
-      );
-
-      const points = response.data.result?.points || [];
-      return this.sortByActivity(points.map((point: any) => ({
-        ...this.mapPointToImpression(point),
-        relevanceScore: DRAFT_WEIGHTS.recent,
-      }))).slice(0, limit);
-    } catch (error: any) {
-      console.error('[Qdrant] Recent impressions search error:', error?.message);
-      return [];
-    }
-  }
-
-  private async searchImpressionsByQuery(
+  private async searchPoints(
     userId: number,
     query: string,
-    limit = QdrantService.QUERY_RECALL_LIMIT,
-  ): Promise<Impression[]> {
-    if (!query.trim()) {
+    limit: number,
+  ): Promise<RetrievedMemoryPoint[]> {
+    const normalizedQuery = String(query || '').trim();
+    if (!normalizedQuery) {
       return [];
     }
 
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
+    const embedding = await this.dashscopeService.getEmbedding(normalizedQuery);
+    const response = await axios.post(
+      `${this.getQdrantUrl()}/collections/${this.getCollectionName()}/points/search`,
+      {
+        vector: embedding,
+        limit,
+        with_payload: true,
+        filter: {
+          must: [
+            {
+              key: 'userId',
+              match: { value: userId },
+            },
+          ],
+        },
+      },
+    );
 
-    try {
-      const queryEmbedding = await this.dashscopeService.getEmbedding(query);
-      const response = await axios.post(
-        `${qdrantUrl}/collections/${collection}/points/search`,
-        {
-          vector: queryEmbedding,
-          limit,
-          with_payload: true,
-          filter: {
-            must: [
-              {
-                key: 'userId',
-                match: { value: userId },
-              },
-            ],
+    return (response.data.result || []).map((point: any) => this.mapPointHit(point));
+  }
+
+  private async getPointById(pointId: string): Promise<RetrievedMemoryPoint | null> {
+    if (!pointId) {
+      return null;
+    }
+
+    const response = await axios.post(
+      `${this.getQdrantUrl()}/collections/${this.getCollectionName()}/points`,
+      {
+        ids: [pointId],
+        with_payload: true,
+      },
+    );
+    const raw = response.data.result;
+    const points = Array.isArray(raw) ? raw : raw?.points || [];
+    return points[0] ? this.mapPointHit(points[0]) : null;
+  }
+
+  private async getLeafPointsForLine(lineId: string): Promise<RetrievedMemoryPoint[]> {
+    if (!lineId) {
+      return [];
+    }
+
+    const response = await axios.post(
+      `${this.getQdrantUrl()}/collections/${this.getCollectionName()}/points/scroll`,
+      {
+        limit: 50,
+        with_payload: true,
+        filter: {
+          must: [
+            {
+              key: 'lineId',
+              match: { value: lineId },
+            },
+          ],
+        },
+      },
+    );
+
+    return (response.data.result?.points || []).map((point: any) => this.mapPointHit(point));
+  }
+
+  private async upsertLeafPoint(point: BackendPointRecord, line: BackendLineRecord): Promise<void> {
+    const embedding = await this.dashscopeService.getEmbedding(point.text);
+    const payload: QdrantLeafPayload = {
+      userId: point.userId,
+      sessionId: point.sessionId,
+      lineId: point.lineId,
+      op: point.op,
+      sourcePointId: point.sourcePointId,
+      text: point.text,
+      memoryDate: point.memoryDate,
+      salienceScore: point.salienceScore,
+      createdAt: point.createdAt,
+      updatedAt: point.updatedAt,
+      anchorLabel: line.anchorLabel,
+      impressionLabel: line.impressionLabel || line.anchorLabel,
+      impressionAbstract: line.impressionAbstract || '',
+      impressionVersion: Number(line.impressionVersion || 1),
+      lineSalienceScore: Number(line.salienceScore || INITIAL_SALIENCE_SCORE),
+      lineLastActivatedAt: line.lastActivatedAt || line.updatedAt || line.createdAt || new Date().toISOString(),
+      lineCreatedAt: line.createdAt || new Date().toISOString(),
+      lineUpdatedAt: line.updatedAt || new Date().toISOString(),
+    };
+
+    await axios.put(
+      `${this.getQdrantUrl()}/collections/${this.getCollectionName()}/points`,
+      {
+        points: [
+          {
+            id: point.id,
+            vector: embedding,
+            payload,
           },
-        },
-      );
-
-      return (response.data.result || []).map((point: any) => this.mapPointToImpression(point));
-    } catch (error: any) {
-      console.error('[Qdrant] Candidate search error:', error?.message);
-      return [];
-    }
+        ],
+      },
+    );
   }
 
-  private async getImpressionsByIds(ids: string[]): Promise<Impression[]> {
-    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-    if (!uniqueIds.length) {
-      return [];
+  private async patchLeafPointPayloads(
+    pointIds: string[],
+    patch: Partial<QdrantLeafPayload>,
+  ): Promise<void> {
+    const uniquePointIds = Array.from(new Set(pointIds.filter(Boolean)));
+    if (!uniquePointIds.length) {
+      return;
     }
 
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-
-    try {
-      const response = await axios.post(
-        `${qdrantUrl}/collections/${collection}/points`,
-        {
-          ids: uniqueIds,
-          with_payload: true,
-        },
-      );
-
-      const raw = response.data.result;
-      const points = Array.isArray(raw) ? raw : raw?.points || [];
-      return points.map((point: any) => this.mapPointToImpression(point));
-    } catch (error: any) {
-      console.error('[Qdrant] Get impressions by ids error:', error?.message);
-      return [];
-    }
+    await axios.post(
+      `${this.getQdrantUrl()}/collections/${this.getCollectionName()}/points/payload`,
+      {
+        points: uniquePointIds,
+        payload: patch,
+      },
+    );
   }
 
-  private async hydrateAncestors(impressions: Impression[]): Promise<Impression[]> {
-    const knownById = new Map(impressions.map((impression) => [impression.id, impression]));
-    let frontier = impressions
-      .map((impression) => impression.sourceImpressionId)
-      .filter((id): id is string => Boolean(id && !knownById.has(id)));
-
-    while (frontier.length) {
-      const ancestors = await this.getImpressionsByIds(frontier);
-      if (!ancestors.length) {
-        break;
-      }
-
-      for (const ancestor of ancestors) {
-        if (!knownById.has(ancestor.id)) {
-          knownById.set(ancestor.id, ancestor);
-        }
-      }
-
-      frontier = ancestors
-        .map((impression) => impression.sourceImpressionId)
-        .filter((id): id is string => Boolean(id && !knownById.has(id)));
+  private async deleteLeafPoint(pointId: string): Promise<void> {
+    if (!pointId) {
+      return;
     }
 
-    return Array.from(knownById.values());
+    await axios.post(
+      `${this.getQdrantUrl()}/collections/${this.getCollectionName()}/points/delete`,
+      {
+        points: [pointId],
+      },
+    );
   }
 
-  private rankRetrievedImpressions(impressions: Impression[]): Impression[] {
-    const now = new Date();
-    return [...impressions]
-      .map((impression) => ({
-        ...impression,
-        effectiveScore: computeEffectiveScore(impression, now),
-      }))
-      .sort((left, right) => {
-        if ((right.effectiveScore || 0) !== (left.effectiveScore || 0)) {
-          return (right.effectiveScore || 0) - (left.effectiveScore || 0);
-        }
+  private async getRecentLines(userId: number, limit = RECENT_LINE_LIMIT): Promise<BackendLineRecord[]> {
+    const response = await axios.post(
+      `${this.getBackendInternalUrl()}/api/internal/memory/lines/recent`,
+      { userId, limit },
+    );
+    return Array.isArray(response.data) ? response.data : [];
+  }
 
-        return new Date(
-          right.lastActivatedAt || right.updatedAt || right.createdAt,
-        ).getTime() - new Date(
-          left.lastActivatedAt || left.updatedAt || left.createdAt,
-        ).getTime();
+  private async searchLinesByKeywords(userId: number, query: string, limit = KEYWORD_LINE_LIMIT): Promise<BackendLineRecord[]> {
+    const response = await axios.post(
+      `${this.getBackendInternalUrl()}/api/internal/memory/lines/keyword-search`,
+      { userId, query, limit },
+    );
+    return Array.isArray(response.data) ? response.data : [];
+  }
+
+  private async getLinesByIds(lineIds: string[]): Promise<BackendLineRecord[]> {
+    const response = await axios.post(
+      `${this.getBackendInternalUrl()}/api/internal/memory/lines/by-ids`,
+      { lineIds },
+    );
+    return Array.isArray(response.data) ? response.data : [];
+  }
+
+  private async getLeafPointsByLineIds(lineIds: string[]): Promise<Record<string, BackendPointRecord[]>> {
+    const response = await axios.post(
+      `${this.getBackendInternalUrl()}/api/internal/memory/lines/leaf-points`,
+      { lineIds },
+    );
+    return response.data || {};
+  }
+
+  private async createLine(params: {
+    userId: number;
+    sessionId?: string;
+    anchorLabel: string;
+  }): Promise<BackendLineRecord> {
+    const response = await axios.post(
+      `${this.getBackendInternalUrl()}/api/internal/memory/lines`,
+      {
+        userId: params.userId,
+        sessionId: params.sessionId || null,
+        anchorLabel: params.anchorLabel,
+        impressionLabel: params.anchorLabel,
+        impressionAbstract: '',
+        salienceScore: INITIAL_SALIENCE_SCORE,
+      },
+    );
+    return response.data as BackendLineRecord;
+  }
+
+  private async updateLineImpression(
+    lineId: string,
+    impression: LineImpressionDraft,
+    salienceScore: number,
+  ): Promise<BackendLineRecord | null> {
+    const response = await axios.patch(
+      `${this.getBackendInternalUrl()}/api/internal/memory/lines/${lineId}/impression`,
+      {
+        impressionLabel: impression.impressionLabel,
+        impressionAbstract: impression.impressionAbstract,
+        salienceScore,
+        lastActivatedAt: new Date().toISOString(),
+      },
+    );
+    return response.data || null;
+  }
+
+  private async createPoint(params: {
+    userId: number;
+    sessionId?: string;
+    lineId: string;
+    op: MemoryPointOp;
+    sourcePointId: string | null;
+    text: string;
+    memoryDate: string;
+    salienceScore: number;
+  }): Promise<BackendPointRecord> {
+    const response = await axios.post(
+      `${this.getBackendInternalUrl()}/api/internal/memory/points`,
+      {
+        userId: params.userId,
+        sessionId: params.sessionId || null,
+        lineId: params.lineId,
+        op: params.op,
+        sourcePointId: params.sourcePointId,
+        text: params.text,
+        memoryDate: params.memoryDate,
+        salienceScore: params.salienceScore,
+      },
+    );
+    return response.data as BackendPointRecord;
+  }
+
+  private async updatePointInPlace(params: {
+    pointId: string;
+    text: string;
+    batchId: string;
+    salienceScore: number;
+  }): Promise<BackendPointRecord | null> {
+    const response = await axios.patch(
+      `${this.getBackendInternalUrl()}/api/internal/memory/points/${params.pointId}`,
+      {
+        text: params.text,
+        batchId: params.batchId,
+        salienceScore: params.salienceScore,
+      },
+    );
+    return response.data || null;
+  }
+
+  private async recordPointMessageLinks(pointId: string, messageIds: number[], batchId: string): Promise<void> {
+    const uniqueMessageIds = Array.from(
+      new Set((messageIds || []).map((messageId) => Number(messageId)).filter(Number.isInteger)),
+    );
+    if (!pointId || !uniqueMessageIds.length) {
+      return;
+    }
+
+    await axios.post(
+      `${this.getBackendInternalUrl()}/api/internal/memory/point-message-links`,
+      {
+        pointId,
+        messageIds: uniqueMessageIds,
+        batchId,
+      },
+    );
+  }
+
+  private sortRecalledPoints(points: RetrievedMemoryPoint[]): RetrievedMemoryPoint[] {
+    return [...points].sort((left, right) => {
+      const rightScore = computeEffectiveScore({
+        id: right.id,
+        createdAt: right.createdAt,
+        updatedAt: right.updatedAt,
+        salienceScore: right.salienceScore,
+        lastActivatedAt: right.line.lastActivatedAt || right.updatedAt || right.createdAt,
+        relevanceScore: right.relevanceScore || 0,
       });
+      const leftScore = computeEffectiveScore({
+        id: left.id,
+        createdAt: left.createdAt,
+        updatedAt: left.updatedAt,
+        salienceScore: left.salienceScore,
+        lastActivatedAt: left.line.lastActivatedAt || left.updatedAt || left.createdAt,
+        relevanceScore: left.relevanceScore || 0,
+      });
+      if (rightScore !== leftScore) {
+        return rightScore - leftScore;
+      }
+
+      return new Date(right.updatedAt || right.createdAt).getTime()
+        - new Date(left.updatedAt || left.createdAt).getTime();
+    });
   }
 
-  private async recallBucketsForDrafts(userId: number, drafts: RetrievalDrafts): Promise<RecallBucket[]> {
-    const orderedDrafts: Array<{ kind: DraftKind; query: string }> = [
-      { kind: 'history', query: drafts.historyRetrievalDraft || '' },
-      { kind: 'delta', query: drafts.deltaRetrievalDraft || '' },
-      { kind: 'merged', query: drafts.mergedRetrievalDraft || '' },
-    ];
-
+  private async recallPointsForDrafts(userId: number, drafts: RetrievalDrafts): Promise<RetrievedMemoryPoint[]> {
     const buckets: RecallBucket[] = [];
 
-    for (const draft of orderedDrafts) {
-      const impressions = draft.query.trim()
-        ? await this.searchImpressionsByQuery(userId, draft.query, QdrantService.QUERY_RECALL_LIMIT)
-        : [];
-      buckets.push({ kind: draft.kind, query: draft.query, impressions });
+    for (const draft of [
+      { kind: 'history' as const, query: drafts.historyRetrievalDraft },
+      { kind: 'delta' as const, query: drafts.deltaRetrievalDraft },
+      { kind: 'merged' as const, query: drafts.mergedRetrievalDraft },
+    ]) {
+      const normalizedQuery = String(draft.query || '').trim();
+      if (!normalizedQuery) {
+        continue;
+      }
+
+      const points = await this.searchPoints(userId, normalizedQuery, QUERY_RECALL_LIMIT);
+      buckets.push({ kind: draft.kind, query: normalizedQuery, points });
     }
 
-    return buckets;
-  }
-
-  private buildRecentSupportQuery(messages: ChatMessage[]): string {
-    const recentMessages = messages.slice(-8);
-    return recentMessages
-      .map((message) => `[${message.role === 'user' ? '用户' : 'AI'}] ${message.content}`)
-      .join('；')
-      .substring(0, 500);
-  }
-
-  private formatNode1RecentSupportItem(impression: Impression): Record<string, unknown> {
-    return {
-      id: impression.id,
-      scene: impression.scene,
-      entities: (impression.entities || []).slice(0, 6),
-      salienceScore: Number((impression.salienceScore || INITIAL_SALIENCE_SCORE).toFixed(3)),
-      lastActivatedAt: impression.lastActivatedAt || impression.updatedAt || impression.createdAt || null,
-    };
-  }
-
-  private formatNode1RecentRerankBreakdownItem(
-    item: Node1RecentRerankBreakdown,
-  ): Record<string, unknown> {
-    return {
-      id: item.impression.id,
-      scene: item.impression.scene,
-      semanticScore: item.semanticScore,
-      anchorCoverage: item.anchorCoverage,
-      normalizedSalienceScore: item.normalizedSalienceScore,
-      rerankScore: item.rerankScore,
-      anchors: item.impressionAnchors,
-      entities: (item.impression.entities || []).slice(0, 6),
-      salienceScore: Number((item.impression.salienceScore || INITIAL_SALIENCE_SCORE).toFixed(3)),
-      lastActivatedAt: item.impression.lastActivatedAt || item.impression.updatedAt || item.impression.createdAt || null,
-    };
-  }
-
-  private extractAnchorTokens(text: string): string[] {
-    if (!text.trim()) {
-      return [];
-    }
-
-    const matches = text.match(/《[^》]{1,20}》|[A-Za-z0-9_-]{3,}|[\u4e00-\u9fa5]{2,10}/g) || [];
-    return Array.from(new Set(
-      matches
-        .map((token) => token.trim())
-        .filter((token) => token.length >= 2 && !ANCHOR_STOPWORDS.has(token)),
-    )).slice(0, 24);
-  }
-
-  private normalizeSalienceForRerank(salienceScore?: number): number {
-    const raw = typeof salienceScore === 'number' && salienceScore > 0
-      ? salienceScore
-      : INITIAL_SALIENCE_SCORE;
-    const normalized = raw / 5;
-    return Math.max(0, Math.min(1, Number(normalized.toFixed(6))));
-  }
-
-  private extractImpressionAnchors(impression: Impression): string[] {
-    const explicitAnchors = Array.isArray(impression.entities)
-      ? impression.entities.map((item) => String(item || '').trim()).filter(Boolean)
-      : [];
-
-    if (explicitAnchors.length) {
-      return Array.from(new Set(explicitAnchors)).slice(0, 8);
-    }
-
-    return this.extractAnchorTokens([
-      impression.scene,
-      ...(impression.points || []).slice(0, 3),
-    ].join('；')).slice(0, 8);
-  }
-
-  private computeAnchorCoverage(
-    queryText: string,
-    queryAnchors: string[],
-    impression: Impression,
-  ): number {
-    const impressionAnchors = this.extractImpressionAnchors(impression);
-    if (!impressionAnchors.length) {
-      return 0;
-    }
-
-    const matched = impressionAnchors.filter((anchor) => (
-      queryText.includes(anchor)
-      || queryAnchors.some((queryAnchor) => (
-        queryAnchor.includes(anchor) || anchor.includes(queryAnchor)
-      ))
-    ));
-
-    return Number((matched.length / impressionAnchors.length).toFixed(6));
-  }
-
-  private async rerankRecentActivatedImpressions(
-    batchId: string,
-    userId: number,
-    messages: ChatMessage[],
-    recentCandidates: Impression[],
-  ): Promise<Impression[]> {
-    if (recentCandidates.length <= QdrantService.NODE1_RECENT_SUPPORT_LIMIT) {
-      console.log(
-        `[Worker][Node1Support] batch=${batchId} mode=direct reason=candidate_count_le_limit candidates=${JSON.stringify(
-          recentCandidates.map((impression) => this.formatNode1RecentSupportItem(impression)),
-        )}`,
-      );
-      return recentCandidates;
-    }
-
-    const supportQuery = this.buildRecentSupportQuery(messages);
-    if (!supportQuery.trim()) {
-      const selected = recentCandidates.slice(0, QdrantService.NODE1_RECENT_SUPPORT_LIMIT);
-      console.log(
-        `[Worker][Node1Support] batch=${batchId} mode=direct reason=empty_support_query candidates=${JSON.stringify(
-          recentCandidates.map((impression) => this.formatNode1RecentSupportItem(impression)),
-        )} selected=${JSON.stringify(
-          selected.map((impression) => this.formatNode1RecentSupportItem(impression)),
-        )}`,
-      );
-      return selected;
-    }
-
-    const queryAnchors = this.extractAnchorTokens(supportQuery);
-    const relatedImpressions = await this.searchImpressionsByQuery(
-      userId,
-      supportQuery,
-      QdrantService.NODE1_RECENT_CANDIDATE_LIMIT * 2,
-    );
-    const semanticScoreById = new Map(
-      relatedImpressions.map((impression) => [impression.id, impression.relevanceScore || 0]),
-    );
-
-    const reranked = [...recentCandidates]
-      .map((impression) => {
-        const semanticScore = Number((semanticScoreById.get(impression.id) || 0).toFixed(6));
-        const impressionAnchors = this.extractImpressionAnchors(impression);
-        const anchorCoverage = this.computeAnchorCoverage(supportQuery, queryAnchors, impression);
-        const normalizedSalienceScore = this.normalizeSalienceForRerank(impression.salienceScore);
-        const rerankScore = Number((
-          semanticScore * NODE1_RERANK_WEIGHTS.semantic
-          + anchorCoverage * NODE1_RERANK_WEIGHTS.anchor
-          + normalizedSalienceScore * NODE1_RERANK_WEIGHTS.salience
-        ).toFixed(6));
-
-        return {
-          impression,
-          semanticScore,
-          anchorCoverage,
-          normalizedSalienceScore,
-          rerankScore,
-          impressionAnchors,
-        } satisfies Node1RecentRerankBreakdown;
-      })
-      .sort((left, right) => {
-        if (right.rerankScore !== left.rerankScore) {
-          return right.rerankScore - left.rerankScore;
-        }
-
-        if (right.semanticScore !== left.semanticScore) {
-          return right.semanticScore - left.semanticScore;
-        }
-
-        if ((right.impression.salienceScore || 0) !== (left.impression.salienceScore || 0)) {
-          return (right.impression.salienceScore || 0) - (left.impression.salienceScore || 0);
-        }
-
-        return new Date(
-          right.impression.lastActivatedAt || right.impression.updatedAt || right.impression.createdAt,
-        ).getTime() - new Date(
-          left.impression.lastActivatedAt || left.impression.updatedAt || left.impression.createdAt,
-        ).getTime();
-      });
-
-    const selected = reranked
-      .slice(0, QdrantService.NODE1_RECENT_SUPPORT_LIMIT)
-      .map((item) => item.impression);
-
-    console.log(
-      `[Worker][Node1Support] batch=${batchId} mode=hybrid_rerank supportQuery=${JSON.stringify(
-        supportQuery,
-      )} queryAnchors=${JSON.stringify(queryAnchors)} candidates=${JSON.stringify(
-        recentCandidates.map((impression) => this.formatNode1RecentSupportItem(impression)),
-      )} breakdown=${JSON.stringify(
-        reranked.map((item) => this.formatNode1RecentRerankBreakdownItem(item)),
-      )} selected=${JSON.stringify(
-        selected.map((impression) => this.formatNode1RecentSupportItem(impression)),
-      )}`,
-    );
-
-    return selected;
-  }
-
-  private async selectNode1RecentSupportImpressions(
-    batchId: string,
-    userId: number,
-    messages: ChatMessage[],
-  ): Promise<Impression[]> {
-    const recentCandidates = await this.getRecentImpressions(
-      userId,
-      QdrantService.NODE1_RECENT_CANDIDATE_LIMIT,
-    );
-
-    return this.rerankRecentActivatedImpressions(batchId, userId, messages, recentCandidates);
-  }
-
-  private async recallImpressionsForDrafts(userId: number, drafts: RetrievalDrafts): Promise<Impression[]> {
-    const buckets = await this.recallBucketsForDrafts(userId, drafts);
-    const merged = new Map<string, Impression>();
-
+    const merged = new Map<string, RetrievedMemoryPoint>();
     for (const bucket of buckets) {
       const weight = DRAFT_WEIGHTS[bucket.kind];
-      for (const impression of bucket.impressions) {
-        const weightedSimilarity = Number(((impression.relevanceScore || 0) * weight).toFixed(6));
-        const existing = merged.get(impression.id);
-
-        if (!existing || weightedSimilarity > (existing.relevanceScore || 0)) {
-          merged.set(impression.id, {
-            ...impression,
-            relevanceScore: weightedSimilarity,
+      for (const point of bucket.points) {
+        const weightedScore = Number(((point.relevanceScore || 0) * weight).toFixed(6));
+        const existing = merged.get(point.id);
+        if (!existing || weightedScore > (existing.relevanceScore || 0)) {
+          merged.set(point.id, {
+            ...point,
+            relevanceScore: weightedScore,
           });
         }
       }
     }
 
-    const deduped = dedupeByIdKeepBest(Array.from(merged.values()));
-    if (!deduped.length) {
-      return [];
-    }
-
-    const knownChain = await this.hydrateAncestors(deduped);
-    const chainDeduped = dedupeByAncestorChain(deduped, knownChain);
-    return this.rankRetrievedImpressions(chainDeduped).slice(0, QdrantService.FINAL_RECALL_LIMIT);
+    return this.sortRecalledPoints(Array.from(merged.values())).slice(0, FINAL_RECALL_LIMIT);
   }
 
-  private async isLeafImpression(userId: number, impressionId: string): Promise<boolean> {
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-
-    try {
-      const response = await axios.post(
-        `${qdrantUrl}/collections/${collection}/points/scroll`,
-        {
-          limit: 1,
-          with_payload: false,
-          filter: {
-            must: [
-              {
-                key: 'userId',
-                match: { value: userId },
-              },
-              {
-                key: 'sourceImpressionId',
-                match: { value: impressionId },
-              },
-            ],
-          },
-        },
-      );
-
-      const points = response.data.result?.points || [];
-      return points.length === 0;
-    } catch (error: any) {
-      console.error('[Qdrant] Leaf lookup error:', error?.message);
-      return false;
-    }
-  }
-
-  private async recordImpressionEdge(
-    userId: number,
-    fromImpressionId: string,
-    toImpressionId: string,
-    batchId: string,
-  ): Promise<void> {
-    try {
-      await axios.post(`${this.getBackendInternalUrl()}/api/internal/impression-edges`, {
-        userId,
-        fromImpressionId,
-        toImpressionId,
-        relationType: 'continued_from',
-        batchId,
-      });
-    } catch (error: any) {
-      console.error('[Worker] Record impression edge error:', error?.message);
-    }
-  }
-
-  private async recordImpressionMessageLinks(
-    impressionId: string,
-    messageIds: number[],
-    batchId: string,
-  ): Promise<void> {
-    const uniqueMessageIds = Array.from(
-      new Set((messageIds || []).map((messageId) => Number(messageId)).filter(Number.isInteger)),
-    );
-
-    if (!impressionId || !uniqueMessageIds.length) {
+  private upsertCandidateLine(
+    bucket: Map<string, CandidateLineAccumulator>,
+    line: MemoryLineCandidate,
+    sourceKind: 'recent' | 'keyword' | 'vector',
+    score: number,
+  ): void {
+    const existing = bucket.get(line.id);
+    if (existing) {
+      existing.recallScore = Math.max(existing.recallScore, score);
+      existing.sourceKinds.add(sourceKind);
       return;
     }
 
-    try {
-      await axios.post(`${this.getBackendInternalUrl()}/api/internal/impression-message-links`, {
-        impressionId,
-        messageIds: uniqueMessageIds,
-        batchId,
-      });
-    } catch (error: any) {
-      console.error('[Worker] Record impression message links error:', error?.message);
-    }
+    bucket.set(line.id, {
+      ...line,
+      recallScore: score,
+      sourceKinds: new Set([sourceKind]),
+    });
   }
 
-  async upsertImpression(params: UpsertImpressionParams): Promise<Impression | null> {
-    const {
-      impressionId,
-      userId,
-      sessionId,
-      date,
-      scene,
-      points,
-      entities = [],
-      retrievalText,
-      action,
-      existingImpression,
-      originType = 'standalone',
-      sourceImpressionId = null,
-      rootImpressionId = null,
-    } = params;
+  private async recallCandidateLines(
+    userId: number,
+    pointText: string,
+  ): Promise<MemoryLineCandidate[]> {
+    const [recentLines, keywordLines, vectorPoints] = await Promise.all([
+      this.getRecentLines(userId, RECENT_LINE_LIMIT),
+      this.searchLinesByKeywords(userId, pointText, KEYWORD_LINE_LIMIT),
+      this.searchPoints(userId, pointText, QUERY_RECALL_LIMIT),
+    ]);
 
-    const normalizedScene = normalizeScene(scene);
-    const normalizedPoints = normalizePoints(points);
-    const normalizedEntities = Array.from(new Set(
-      (entities || [])
-        .map((entity) => String(entity || '').replace(/\s+/g, ' ').trim().substring(0, 48))
-        .filter(Boolean),
-    )).slice(0, 8);
-    const normalizedRetrievalText = normalizeRetrievalText(retrievalText);
-    const content = composeLegacyContent(normalizedScene, normalizedPoints);
+    const bucket = new Map<string, CandidateLineAccumulator>();
 
-    if (!normalizedScene || !normalizedPoints.length || !normalizedRetrievalText) {
-      console.log('[Qdrant] Skipping empty impression');
-      return null;
+    for (const line of recentLines) {
+      this.upsertCandidateLine(bucket, buildLineCandidate(line), 'recent', 0.2);
     }
 
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-    const embedding = await this.dashscopeService.getEmbedding(normalizedRetrievalText);
-    const now = new Date().toISOString();
+    for (const line of keywordLines) {
+      this.upsertCandidateLine(bucket, buildLineCandidate(line), 'keyword', 0.45);
+    }
 
-    const pointId = action === 'create' ? randomUUID() : impressionId!;
-    const createdAt = action === 'update' ? (existingImpression?.createdAt || now) : now;
-    const memoryDate = action === 'update'
-      ? (existingImpression?.memoryDate || date)
-      : date;
-    const payloadOriginType = action === 'update'
-      ? normalizeOriginType(existingImpression?.originType)
-      : originType;
-    const payloadSourceImpressionId = action === 'update'
-      ? (existingImpression?.sourceImpressionId ?? sourceImpressionId)
-      : sourceImpressionId;
-    const payloadRootImpressionId = action === 'update'
-      ? (existingImpression?.rootImpressionId || rootImpressionId || pointId)
-      : (rootImpressionId || pointId);
-    const salienceScore = action === 'update'
-      ? bumpSalienceScore(existingImpression?.salienceScore)
-      : INITIAL_SALIENCE_SCORE;
-    const resolvedSessionId = action === 'update'
-      ? (existingImpression?.sessionId || sessionId || null)
-      : (sessionId || null);
+    const bestVectorScoreByLine = new Map<string, RetrievedMemoryPoint>();
+    for (const point of vectorPoints) {
+      const existing = bestVectorScoreByLine.get(point.lineId);
+      if (!existing || (point.relevanceScore || 0) > (existing.relevanceScore || 0)) {
+        bestVectorScoreByLine.set(point.lineId, point);
+      }
+    }
 
-    try {
-      await axios.put(
-        `${qdrantUrl}/collections/${collection}/points`,
-        {
-          points: [
-            {
-              id: pointId,
-              vector: embedding,
-              payload: {
-                userId,
-                sessionId: resolvedSessionId,
-                memoryDate,
-                date: memoryDate,
-                scene: normalizedScene,
-                points: normalizedPoints,
-                entities: normalizedEntities,
-                retrievalText: normalizedRetrievalText,
-                content,
-                createdAt,
-                updatedAt: now,
-                salienceScore,
-                lastActivatedAt: now,
-                originType: payloadOriginType,
-                sourceImpressionId: payloadSourceImpressionId,
-                rootImpressionId: payloadRootImpressionId,
-              },
-            },
-          ],
-        },
+    for (const point of bestVectorScoreByLine.values()) {
+      this.upsertCandidateLine(
+        bucket,
+        point.line,
+        'vector',
+        Number((point.relevanceScore || 0).toFixed(6)),
       );
-      console.log(`[Qdrant] ${action === 'create' ? 'Created' : 'Updated'} impression: ${pointId}`);
-      return {
-        id: pointId,
-        scene: normalizedScene,
-        points: normalizedPoints,
-        entities: normalizedEntities,
-        retrievalText: normalizedRetrievalText,
-        content,
-        createdAt,
-        updatedAt: now,
-        sessionId: resolvedSessionId,
-        memoryDate,
-        originType: payloadOriginType,
-        sourceImpressionId: payloadSourceImpressionId,
-        rootImpressionId: payloadRootImpressionId,
-        salienceScore,
-        lastActivatedAt: now,
-      };
-    } catch (error: any) {
-      console.error('[Qdrant] Upsert error:', error?.message);
-      return null;
     }
+
+    return Array.from(bucket.values())
+      .sort((left, right) => {
+        if (right.recallScore !== left.recallScore) {
+          return right.recallScore - left.recallScore;
+        }
+
+        return new Date(right.lastActivatedAt).getTime() - new Date(left.lastActivatedAt).getTime();
+      })
+      .slice(0, CANDIDATE_LINE_LIMIT)
+      .map((line) => ({
+        id: line.id,
+        anchorLabel: line.anchorLabel,
+        impressionLabel: line.impressionLabel,
+        impressionAbstract: line.impressionAbstract,
+        salienceScore: line.salienceScore,
+        lastActivatedAt: line.lastActivatedAt,
+      }));
   }
 
   private resolveMessageIds(messages: ChatMessage[]): number[] {
@@ -815,102 +593,230 @@ export class QdrantService {
       .filter((messageId): messageId is number => Number.isInteger(messageId));
   }
 
-  private async createOrUpdateImpression(params: {
+  private async rebuildDirtyLines(dirtyLineIds: Set<string>): Promise<void> {
+    const lineIds = Array.from(dirtyLineIds);
+    if (!lineIds.length) {
+      return;
+    }
+
+    const [lines, leafPointsByLineId] = await Promise.all([
+      this.getLinesByIds(lineIds),
+      this.getLeafPointsByLineIds(lineIds),
+    ]);
+    const lineById = new Map(lines.map((line) => [line.id, line]));
+
+    for (const lineId of lineIds) {
+      const line = lineById.get(lineId);
+      const leafPoints = leafPointsByLineId[lineId] || [];
+      if (!line || !leafPoints.length) {
+        continue;
+      }
+
+      const impression = await this.dashscopeService.rebuildLineImpression({
+        anchorLabel: line.anchorLabel,
+        leafPoints: leafPoints.map((point) => point.text),
+      });
+      const nextLine = await this.updateLineImpression(
+        lineId,
+        impression,
+        bumpSalienceScore(line.salienceScore),
+      );
+
+      if (!nextLine) {
+        continue;
+      }
+
+      await this.patchLeafPointPayloads(
+        leafPoints.map((point) => point.id),
+        {
+          anchorLabel: nextLine.anchorLabel,
+          impressionLabel: nextLine.impressionLabel,
+          impressionAbstract: nextLine.impressionAbstract,
+          impressionVersion: Number(nextLine.impressionVersion || 1),
+          lineSalienceScore: Number(nextLine.salienceScore || INITIAL_SALIENCE_SCORE),
+          lineLastActivatedAt: nextLine.lastActivatedAt || new Date().toISOString(),
+          lineCreatedAt: nextLine.createdAt || new Date().toISOString(),
+          lineUpdatedAt: nextLine.updatedAt || new Date().toISOString(),
+        },
+      );
+    }
+  }
+
+  private async processSourcePointDrafts(params: {
     userId: number;
     sessionId?: string;
-    batchMemoryDate: string;
     batchId: string;
-    finalImpression: FinalImpressionDraft;
-    sourceImpression?: Impression;
+    batchMemoryDate: string;
     linkedMessages: ChatMessage[];
-  }): Promise<'created' | 'updated' | 'skipped'> {
-    const {
-      userId,
-      sessionId,
-      batchMemoryDate,
-      batchId,
-      finalImpression,
-      sourceImpression,
-      linkedMessages,
-    } = params;
+    pointDrafts: Node2PointDraft[];
+    recalledPoints: RetrievedMemoryPoint[];
+    dirtyLineIds: Set<string>;
+  }): Promise<void> {
+    const recalledById = new Map(params.recalledPoints.map((point) => [point.id, point]));
 
-    if (!finalImpression.scene.trim() || !finalImpression.points.length || !finalImpression.retrievalText.trim()) {
-      return 'skipped';
-    }
-
-    let targetImpression: Impression | null = null;
-
-    if (!sourceImpression) {
-      targetImpression = await this.upsertImpression({
-        userId,
-        sessionId,
-        date: batchMemoryDate,
-        scene: finalImpression.scene,
-        points: finalImpression.points,
-        entities: finalImpression.entities,
-        retrievalText: finalImpression.retrievalText,
-        action: 'create',
-        originType: 'standalone',
-        sourceImpressionId: null,
-        rootImpressionId: null,
-      });
-      if (!targetImpression) {
-        return 'skipped';
+    for (const draft of params.pointDrafts) {
+      if (draft.op === 'new' || !draft.sourcePointId) {
+        continue;
       }
-    } else {
-      const isLeaf = await this.isLeafImpression(userId, sourceImpression.id);
-      const canUpdate = shouldUpdateExistingImpression(sourceImpression, isLeaf, batchMemoryDate);
 
-      if (canUpdate) {
-        targetImpression = await this.upsertImpression({
-          impressionId: sourceImpression.id,
-          userId,
-          sessionId,
-          date: batchMemoryDate,
-          scene: finalImpression.scene,
-          points: finalImpression.points,
-          entities: finalImpression.entities,
-          retrievalText: finalImpression.retrievalText,
-          action: 'update',
-          existingImpression: sourceImpression,
+      const source = recalledById.get(draft.sourcePointId)
+        || await this.getPointById(draft.sourcePointId);
+      if (!source) {
+        continue;
+      }
+
+      const nextSalienceScore = bumpSalienceScore(source.salienceScore);
+      if (source.memoryDate === params.batchMemoryDate) {
+        const updatedPoint = await this.updatePointInPlace({
+          pointId: source.id,
+          text: draft.text,
+          batchId: params.batchId,
+          salienceScore: nextSalienceScore,
         });
-        if (!targetImpression) {
-          return 'skipped';
+        if (!updatedPoint) {
+          continue;
         }
+
+        await this.upsertLeafPoint(updatedPoint, source.line);
+        await this.recordPointMessageLinks(
+          updatedPoint.id,
+          this.resolveMessageIds(params.linkedMessages),
+          params.batchId,
+        );
       } else {
-        targetImpression = await this.upsertImpression({
-          userId,
-          sessionId,
-          date: batchMemoryDate,
-          scene: finalImpression.scene,
-          points: finalImpression.points,
-          entities: finalImpression.entities,
-          retrievalText: finalImpression.retrievalText,
-          action: 'create',
-          originType: 'continued',
-          sourceImpressionId: sourceImpression.id,
-          rootImpressionId: sourceImpression.rootImpressionId || sourceImpression.id,
+        const createdPoint = await this.createPoint({
+          userId: params.userId,
+          sessionId: params.sessionId,
+          lineId: source.lineId,
+          op: draft.op,
+          sourcePointId: source.id,
+          text: draft.text,
+          memoryDate: params.batchMemoryDate,
+          salienceScore: INITIAL_SALIENCE_SCORE,
         });
-        if (!targetImpression) {
-          return 'skipped';
-        }
-
-        await this.recordImpressionEdge(
-          userId,
-          sourceImpression.id,
-          targetImpression.id,
-          batchId,
+        await this.deleteLeafPoint(source.id);
+        await this.upsertLeafPoint(createdPoint, source.line);
+        await this.recordPointMessageLinks(
+          createdPoint.id,
+          this.resolveMessageIds(params.linkedMessages),
+          params.batchId,
         );
       }
-    }
 
-    await this.recordImpressionMessageLinks(
-      targetImpression.id,
-      this.resolveMessageIds(linkedMessages),
-      batchId,
+      params.dirtyLineIds.add(source.lineId);
+    }
+  }
+
+  private async processNewPointDrafts(params: {
+    userId: number;
+    sessionId?: string;
+    batchId: string;
+    batchMemoryDate: string;
+    linkedMessages: ChatMessage[];
+    pointDrafts: Node2PointDraft[];
+    dirtyLineIds: Set<string>;
+  }): Promise<void> {
+    const unresolvedDrafts: Node2PointDraft[] = [];
+
+    const attachmentResults = await Promise.all(
+      params.pointDrafts
+        .filter((draft) => draft.op === 'new' && !draft.sourcePointId)
+        .map(async (draft) => {
+          const candidateLines = await this.recallCandidateLines(params.userId, draft.text);
+          const route = await this.dashscopeService.attachPointToExistingLine({
+            pointText: draft.text,
+            candidateLines,
+          });
+          return { draft, candidateLines, route };
+        }),
     );
 
-    return targetImpression.id === sourceImpression?.id ? 'updated' : 'created';
+    const lineCache = new Map<string, BackendLineRecord>();
+    for (const result of attachmentResults) {
+      if (!result.route.targetLineId) {
+        unresolvedDrafts.push(result.draft);
+        continue;
+      }
+
+      let line = lineCache.get(result.route.targetLineId);
+      if (!line) {
+        const matched = result.candidateLines.find((candidate) => candidate.id === result.route.targetLineId);
+        line = matched
+          ? {
+            ...matched,
+            impressionVersion: 1,
+          }
+          : (await this.getLinesByIds([result.route.targetLineId]))[0];
+        if (line) {
+          lineCache.set(line.id, line);
+        }
+      }
+
+      if (!line) {
+        unresolvedDrafts.push(result.draft);
+        continue;
+      }
+
+      const createdPoint = await this.createPoint({
+        userId: params.userId,
+        sessionId: params.sessionId,
+        lineId: line.id,
+        op: 'new',
+        sourcePointId: null,
+        text: result.draft.text,
+        memoryDate: params.batchMemoryDate,
+        salienceScore: INITIAL_SALIENCE_SCORE,
+      });
+      await this.upsertLeafPoint(createdPoint, line);
+      await this.recordPointMessageLinks(
+        createdPoint.id,
+        this.resolveMessageIds(params.linkedMessages),
+        params.batchId,
+      );
+      params.dirtyLineIds.add(line.id);
+    }
+
+    if (!unresolvedDrafts.length) {
+      return;
+    }
+
+    const newLinePlan = await this.dashscopeService.planNewLines({
+      pointTexts: unresolvedDrafts.map((draft) => draft.text),
+    });
+
+    for (const group of newLinePlan.newLines) {
+      const line = await this.createLine({
+        userId: params.userId,
+        sessionId: params.sessionId,
+        anchorLabel: group.anchorLabel,
+      });
+
+      for (const pointIndex of group.pointIndexes) {
+        const draft = unresolvedDrafts[pointIndex];
+        if (!draft) {
+          continue;
+        }
+
+        const createdPoint = await this.createPoint({
+          userId: params.userId,
+          sessionId: params.sessionId,
+          lineId: line.id,
+          op: 'new',
+          sourcePointId: null,
+          text: draft.text,
+          memoryDate: params.batchMemoryDate,
+          salienceScore: INITIAL_SALIENCE_SCORE,
+        });
+        await this.upsertLeafPoint(createdPoint, line);
+        await this.recordPointMessageLinks(
+          createdPoint.id,
+          this.resolveMessageIds(params.linkedMessages),
+          params.batchId,
+        );
+      }
+
+      params.dirtyLineIds.add(line.id);
+    }
   }
 
   async processSummaryJob(data: SummaryJobData): Promise<void> {
@@ -918,81 +824,73 @@ export class QdrantService {
     const startedAt = Date.now();
     const historyMessages = messages.filter((message) => message.isNew === false);
     const newMessages = messages.filter((message) => message.isNew !== false);
+    const dirtyLineIds = new Set<string>();
 
-    console.log(`[Worker] Processing job ${batchId} for user ${userId}${sessionId ? `, session ${sessionId}` : ''}`);
-    console.log(`[Worker] Messages: ${messages.length}, New messages: ${newMessages.length}, MemoryDate: ${date}`);
+    console.log(`[Worker] Processing batch ${batchId} for user ${userId}`);
 
     await this.ensureCollection();
 
-    const recentActivatedImpressions = await this.selectNode1RecentSupportImpressions(
-      batchId,
-      userId,
-      messages,
-    );
     const drafts = await this.dashscopeService.generateRetrievalDrafts({
       messages,
-      recentActivatedImpressions,
+      recentActivatedImpressions: [],
     });
     console.log(
-      `[Worker][Node1] batch=${batchId} recentSupport=${recentActivatedImpressions.length} history="${drafts.historyRetrievalDraft.substring(0, 120)}" delta="${drafts.deltaRetrievalDraft.substring(0, 120)}" merged="${drafts.mergedRetrievalDraft.substring(0, 120)}"`,
+      `[Worker][Drafts] batch=${batchId} history="${drafts.historyRetrievalDraft.substring(0, 80)}" delta="${drafts.deltaRetrievalDraft.substring(0, 80)}" merged="${drafts.mergedRetrievalDraft.substring(0, 80)}"`,
     );
 
-    const recalledImpressions = await this.recallImpressionsForDrafts(userId, drafts);
+    const recalledPoints = await this.recallPointsForDrafts(userId, drafts);
     console.log(
-      `[Worker][Recall] batch=${batchId} recalled=${recalledImpressions.length} scenes=${recalledImpressions.map((item) => item.scene).join(' | ')}`,
+      `[Worker][RecallPoints] batch=${batchId} recalled=${recalledPoints.length} pointIds=${recalledPoints.map((point) => point.id).join(',')}`,
     );
 
-    const candidateImpressions = await this.dashscopeService.generateCandidateImpressions({
+    const node2PointResult = await this.dashscopeService.generateNode2Points({
       historyMessages,
       newMessages,
-      oldImpressions: recalledImpressions,
+      oldPoints: recalledPoints,
     });
+    const node2CandidateAnalysis = Array.isArray(node2PointResult)
+      ? null
+      : (node2PointResult.candidateAnalysis || null);
+    const node2Points = Array.isArray(node2PointResult)
+      ? node2PointResult
+      : node2PointResult.points;
     console.log(
-      `[Worker][Node2Candidate] batch=${batchId} history=${historyMessages.length} new=${newMessages.length} candidates=${candidateImpressions.length} scenes=${candidateImpressions.map((item) => item.scene).join(' | ')}`,
+      `[Worker][Node2Points] batch=${batchId} candidateAnalysis=${JSON.stringify(node2CandidateAnalysis)} generated=${node2Points.length} drafts=${JSON.stringify(
+        node2Points.map((point) => ({
+          opAnalysis: point.opAnalysis || null,
+          op: point.op,
+          sourcePointId: point.sourcePointId,
+          rewriteAnalysis: point.rewriteAnalysis || null,
+          text: point.text,
+        })),
+      ).substring(0, 1500)}`,
     );
 
-    const finalImpressions = await this.dashscopeService.generateFinalImpressions({
-      historyMessages,
-      newMessages,
-      oldImpressions: recalledImpressions,
-      candidateImpressions,
+    await this.processSourcePointDrafts({
+      userId,
+      sessionId,
+      batchId,
+      batchMemoryDate: date,
+      linkedMessages: newMessages,
+      pointDrafts: node2Points,
+      recalledPoints,
+      dirtyLineIds,
     });
-    console.log(`[Worker][Node2Reconcile] batch=${batchId} impressions=${finalImpressions.length}`);
 
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
+    await this.processNewPointDrafts({
+      userId,
+      sessionId,
+      batchId,
+      batchMemoryDate: date,
+      linkedMessages: newMessages,
+      pointDrafts: node2Points,
+      dirtyLineIds,
+    });
 
-    for (const [index, finalImpression] of finalImpressions.entries()) {
-      const sourceImpression = finalImpression.sourceImpressionId
-        ? recalledImpressions.find((impression) => impression.id === finalImpression.sourceImpressionId)
-        : undefined;
-
-      console.log(
-        `[Worker][Persist] batch=${batchId} impression=${index + 1} scene=${finalImpression.scene} source=${sourceImpression?.id || 'null'}`,
-      );
-
-      const result = await this.createOrUpdateImpression({
-        userId,
-        sessionId,
-        batchMemoryDate: date,
-        batchId,
-        finalImpression,
-        sourceImpression,
-        linkedMessages: newMessages,
-      });
-
-      if (result === 'created') {
-        created += 1;
-      } else if (result === 'updated') {
-        updated += 1;
-      } else {
-        skipped += 1;
-      }
-    }
+    await this.rebuildDirtyLines(dirtyLineIds);
 
     console.log(
-      `[Worker] Finished batch ${batchId}: created=${created}, updated=${updated}, skipped=${skipped}, duration=${Date.now() - startedAt}ms`,
+      `[Worker] Finished batch ${batchId}: dirtyLines=${Array.from(dirtyLineIds).length}, duration=${Date.now() - startedAt}ms`,
     );
   }
 }

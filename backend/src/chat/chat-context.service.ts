@@ -235,69 +235,6 @@ export class ChatContextService {
     ).toFixed(6));
   }
 
-  private async hydrateAncestors(candidates: ContextCandidate[]): Promise<ImpressionRecord[]> {
-    const knownById = new Map(candidates.map((candidate) => [candidate.id, candidate as ImpressionRecord]));
-    let frontier = candidates
-      .map((candidate) => candidate.sourceImpressionId)
-      .filter((id): id is string => Boolean(id && !knownById.has(id)));
-
-    while (frontier.length) {
-      const ancestors = await this.impressionsService.getImpressionsByIds(frontier);
-      if (!ancestors.length) {
-        break;
-      }
-
-      for (const ancestor of ancestors) {
-        if (!knownById.has(ancestor.id)) {
-          knownById.set(ancestor.id, ancestor);
-        }
-      }
-
-      frontier = ancestors
-        .map((ancestor) => ancestor.sourceImpressionId)
-        .filter((id): id is string => Boolean(id && !knownById.has(id)));
-    }
-
-    return Array.from(knownById.values());
-  }
-
-  private collectAncestorIds(
-    impressionId: string,
-    allKnownImpressions: Map<string, Pick<ImpressionRecord, 'id' | 'sourceImpressionId'>>,
-  ): Set<string> {
-    const ancestorIds = new Set<string>();
-    const visited = new Set<string>();
-    let current = allKnownImpressions.get(impressionId);
-
-    while (current?.sourceImpressionId && !visited.has(current.sourceImpressionId)) {
-      const parentId = current.sourceImpressionId;
-      ancestorIds.add(parentId);
-      visited.add(parentId);
-      current = allKnownImpressions.get(parentId);
-    }
-
-    return ancestorIds;
-  }
-
-  private dedupeByAncestorChain(
-    candidates: ContextCandidate[],
-    allKnownImpressions: ImpressionRecord[],
-  ): ContextCandidate[] {
-    const knownById = new Map(allKnownImpressions.map((record) => [record.id, record]));
-    const removedIds = new Set<string>();
-
-    for (const candidate of candidates) {
-      const ancestorIds = this.collectAncestorIds(candidate.id, knownById);
-      for (const ancestorId of ancestorIds) {
-        if (candidates.some((item) => item.id === ancestorId)) {
-          removedIds.add(ancestorId);
-        }
-      }
-    }
-
-    return candidates.filter((candidate) => !removedIds.has(candidate.id));
-  }
-
   private async mergeAndRankCandidates(
     recentImpressions: ImpressionRecord[],
     windowRecall: ImpressionRecord[],
@@ -331,8 +268,9 @@ export class ChatContextService {
       return [];
     }
 
-    const withAncestors = await this.hydrateAncestors(candidates);
-    const deduped = this.dedupeByAncestorChain(candidates, withAncestors)
+    const deduped = Array.from(
+      new Map(candidates.map((candidate) => [candidate.id, candidate])).values(),
+    )
       .sort((left, right) => {
         if (right.finalScore !== left.finalScore) {
           return right.finalScore - left.finalScore;

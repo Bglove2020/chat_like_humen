@@ -90,36 +90,31 @@ describe('ChatContextService', () => {
     });
   });
 
-  it('dedupes ancestor chain and keeps the descendant impression', async () => {
+  it('dedupes repeated line hits by id while keeping the highest-ranked result', async () => {
     const chatMessageService = {
       getLatestMessages: jest.fn().mockResolvedValue([]),
     } as any;
 
-    const rootImpression = createImpressionRecord({
-      id: 'root',
-      scene: '根印象',
-      score: 0.74,
-      sourceImpressionId: null,
-      rootImpressionId: 'root',
-    });
-    const childImpression = createImpressionRecord({
-      id: 'child',
-      scene: '子印象',
+    const repeatedLine = createImpressionRecord({
+      id: 'line-1',
+      scene: '同一主线',
       score: 0.79,
-      sourceImpressionId: 'root',
-      rootImpressionId: 'root',
+    });
+    const anotherLine = createImpressionRecord({
+      id: 'line-2',
+      scene: '另一条主线',
+      score: 0.52,
     });
 
     const impressionsService = {
-      getRecentUserImpressions: jest.fn().mockResolvedValue([]),
+      getRecentUserImpressions: jest.fn().mockResolvedValue([repeatedLine]),
       searchUserImpressions: jest.fn().mockImplementation(async (_userId: number, query: string) => {
         if (query.includes('当前用户新消息：')) {
-          return [rootImpression, childImpression];
+          return [repeatedLine, anotherLine];
         }
 
         return [];
       }),
-      getImpressionsByIds: jest.fn().mockResolvedValue([rootImpression]),
     } as any;
 
     const userProfileService = {
@@ -132,7 +127,12 @@ describe('ChatContextService', () => {
 
     expect(result.context).toEqual([
       {
-        scene: '子印象',
+        scene: '同一主线',
+        points: ['默认记忆点'],
+        time: '2026-04-10 18:00:00',
+      },
+      {
+        scene: '另一条主线',
         points: ['默认记忆点'],
         time: '2026-04-10 18:00:00',
       },

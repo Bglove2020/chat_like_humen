@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
 import axios from 'axios';
-import { In, Repository } from 'typeorm';
-import { ImpressionEdge } from './impression-edge.entity';
-import { ImpressionMessageLink } from './impression-message-link.entity';
-import { ChatMessage } from '../chat/chat_message.entity';
+import {
+  LineMessageRecord,
+  MemoryLineRecord,
+  MemoryPointRecord,
+  MemoryService,
+} from '../memory/memory.service';
 
 export interface SearchResult {
   content: string;
@@ -39,42 +40,36 @@ export interface ImpressionSourceRecord {
   source: ImpressionRecord | null;
 }
 
-export interface ImpressionMessageRecord {
-  batchId: string;
-  linkedAt: string;
-  message: {
-    id: number;
-    role: 'user' | 'assistant';
-    content: string;
-    sessionId: string | null;
-    createdAt: string;
-  } | null;
+export type ImpressionMessageRecord = LineMessageRecord;
+
+const INITIAL_SALIENCE_SCORE = 1;
+const DECAY_HALF_LIFE_DAYS = 30;
+
+function computeDecayWeight(
+  salienceScore = INITIAL_SALIENCE_SCORE,
+  lastActivatedAt?: string,
+  now = new Date(),
+): number {
+  const activatedAt = lastActivatedAt ? new Date(lastActivatedAt) : now;
+  const elapsedMs = Math.max(0, now.getTime() - activatedAt.getTime());
+  const elapsedDays = elapsedMs / (24 * 60 * 60 * 1000);
+  const decayFactor = Math.exp((-Math.log(2) * elapsedDays) / DECAY_HALF_LIFE_DAYS);
+  return salienceScore * decayFactor;
 }
 
-interface RecordImpressionEdgeParams {
-  userId: number;
-  fromImpressionId: string;
-  toImpressionId: string;
-  relationType?: string;
-  batchId: string;
+function computeEffectiveScore(record: Pick<ImpressionRecord, 'score' | 'salienceScore' | 'lastActivatedAt'>): number {
+  return (record.score || 0) * computeDecayWeight(record.salienceScore, record.lastActivatedAt);
 }
 
-interface RecordImpressionMessageLinksParams {
-  impressionId: string;
-  messageIds: number[];
-  batchId: string;
+function normalizeText(value: string, maxLength: number): string {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
 @Injectable()
 export class ImpressionsService {
   constructor(
     private configService: ConfigService,
-    @InjectRepository(ImpressionEdge)
-    private impressionEdgeRepository: Repository<ImpressionEdge>,
-    @InjectRepository(ImpressionMessageLink)
-    private impressionMessageLinkRepository: Repository<ImpressionMessageLink>,
-    @InjectRepository(ChatMessage)
-    private chatMessageRepository: Repository<ChatMessage>,
+    private memoryService: MemoryService,
   ) {}
 
   private getEmbeddingUrl(): string {
@@ -93,160 +88,155 @@ export class ImpressionsService {
     return this.configService.get<string>('qdrant.collectionName')!;
   }
 
-  private mapPointToImpressionRecord(point: any): ImpressionRecord {
-    const payload = point.payload || {};
-    const memoryDate = payload.memoryDate || payload.date || '';
-    const originType = payload.originType === 'continued_from_history'
-      ? 'continued'
-      : (payload.originType || 'standalone');
-    const scene = String(payload.scene || '').trim();
-    const points = Array.isArray(payload.points)
-      ? payload.points.map((item: unknown) => String(item || '').trim()).filter(Boolean)
-      : [];
-    const entities = Array.isArray(payload.entities)
-      ? payload.entities.map((item: unknown) => String(item || '').trim()).filter(Boolean)
-      : [];
-    const retrievalText = String(payload.retrievalText || '').trim();
+  private buildRetrievalText(line: MemoryLineRecord, leafPoints: MemoryPointRecord[]): string {
+    const parts = [
+      line.anchorLabel,
+      line.impressionLabel,
+      line.impressionAbstract,
+      ...leafPoints.slice(0, 3).map((point) => point.text),
+    ]
+      .map((item) => normalizeText(item, 180))
+      .filter(Boolean);
+
+    return normalizeText(parts.join('。'), 360);
+  }
+
+  private getMemoryDate(line: MemoryLineRecord, leafPoints: MemoryPointRecord[]): string {
+    const latestPoint = [...leafPoints]
+      .sort((left, right) => (
+        new Date(right.updatedAt || right.createdAt || 0).getTime()
+        - new Date(left.updatedAt || left.createdAt || 0).getTime()
+      ))[0];
+
+    if (latestPoint?.memoryDate) {
+      return latestPoint.memoryDate;
+    }
+
+    return (line.updatedAt || line.createdAt || '').split('T')[0] || '';
+  }
+
+  private mapLineToImpressionRecord(
+    line: MemoryLineRecord,
+    leafPoints: MemoryPointRecord[],
+    score = 0,
+  ): ImpressionRecord {
+    const scene = normalizeText(line.impressionLabel || line.anchorLabel, 120);
+    const points = Array.from(new Set(
+      leafPoints
+        .map((point) => normalizeText(point.text, 220))
+        .filter(Boolean),
+    )).slice(0, 4);
+    const memoryDate = this.getMemoryDate(line, leafPoints);
+    const retrievalText = this.buildRetrievalText(line, leafPoints);
+
     return {
-      id: String(point.id),
+      id: line.id,
       scene,
       points,
-      entities,
+      entities: [],
       retrievalText,
-      content: payload.content || [scene, ...points.map((item) => `- ${item}`)].join('\n'),
-      score: point.score || 0,
-      sessionId: payload.sessionId || null,
-      createdAt: payload.createdAt || '',
-      updatedAt: payload.updatedAt || '',
+      content: line.impressionAbstract || [scene, ...points.map((point) => `- ${point}`)].join('\n'),
+      score,
+      sessionId: line.sessionId,
+      createdAt: line.createdAt,
+      updatedAt: line.updatedAt,
       memoryDate,
       date: memoryDate,
-      salienceScore: Number(payload.salienceScore || 0),
-      lastActivatedAt: payload.lastActivatedAt || payload.updatedAt || payload.createdAt || '',
-      originType,
-      sourceImpressionId: payload.sourceImpressionId || null,
-      rootImpressionId: payload.rootImpressionId || String(point.id),
+      salienceScore: Number(line.salienceScore || INITIAL_SALIENCE_SCORE),
+      lastActivatedAt: line.lastActivatedAt || line.updatedAt || line.createdAt,
+      originType: 'line',
+      sourceImpressionId: null,
+      rootImpressionId: line.id,
     };
   }
 
-  private sortByRecent(records: ImpressionRecord[]): ImpressionRecord[] {
-    return [...records].sort((a, b) => {
-      const aTime = new Date(a.lastActivatedAt || a.updatedAt || a.createdAt).getTime();
-      const bTime = new Date(b.lastActivatedAt || b.updatedAt || b.createdAt).getTime();
-      return bTime - aTime;
-    });
-  }
-
-  private getRecordTimestamp(record: Pick<ImpressionRecord, 'lastActivatedAt' | 'updatedAt' | 'createdAt'>): number {
-    return new Date(record.lastActivatedAt || record.updatedAt || record.createdAt).getTime();
-  }
-
-  async search(query: string, limit = 5): Promise<SearchResult[]> {
-    // Get query embedding
-    const embedding = await this.getEmbedding(query);
-
-    // Search Qdrant
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-
-    try {
-      const response = await axios.post(
-        `${qdrantUrl}/collections/${collection}/points/search`,
-        {
-          vector: embedding,
-          limit,
-          with_payload: true,
-        },
-      );
-
-      const points = response.data.result || [];
-      return points.map((point: any) => ({
-        content: point.payload?.content || '',
-        score: point.score,
-      }));
-    } catch (error: any) {
-      console.error('[Qdrant] Search error:', error?.message);
+  private async hydrateLineSummaries(
+    lineScores: Array<{ lineId: string; score: number }>,
+  ): Promise<ImpressionRecord[]> {
+    const lineIds = Array.from(new Set(lineScores.map((item) => item.lineId).filter(Boolean)));
+    if (!lineIds.length) {
       return [];
     }
+
+    const [lines, leafPointsByLineId] = await Promise.all([
+      this.memoryService.getLinesByIds(lineIds),
+      this.memoryService.getLeafPointsByLineIds(lineIds),
+    ]);
+    const lineById = new Map(lines.map((line) => [line.id, line]));
+    const scoreByLineId = new Map(lineScores.map((item) => [item.lineId, item.score]));
+
+    return lineIds
+      .map((lineId) => {
+        const line = lineById.get(lineId);
+        if (!line) {
+          return null;
+        }
+
+        return this.mapLineToImpressionRecord(
+          line,
+          leafPointsByLineId[lineId] || [],
+          scoreByLineId.get(lineId) || 0,
+        );
+      })
+      .filter((item): item is ImpressionRecord => Boolean(item));
   }
 
   async getEmbedding(text: string): Promise<number[]> {
     const apiKey = this.configService.get<string>('dashscope.apiKey');
 
-    try {
-      const response = await axios.post(
-        this.getEmbeddingUrl(),
-        {
-          model: this.getEmbeddingModel(),
-          input: { texts: [text] },
+    const response = await axios.post(
+      this.getEmbeddingUrl(),
+      {
+        model: this.getEmbeddingModel(),
+        input: { texts: [text] },
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
         },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-        },
-      );
+      },
+    );
 
-      const embeddings = response.data.output?.embeddings;
-      if (!embeddings || !embeddings[0]?.embedding) {
-        console.error('[DashScope] No embeddings in response:', JSON.stringify(response.data).substring(0, 300));
-        throw new Error('Invalid embedding response');
-      }
-      return embeddings[0].embedding;
-    } catch (error: any) {
-      console.error('[DashScope] Embedding error:', error?.message);
-      throw error;
+    const embeddings = response.data.output?.embeddings;
+    if (!embeddings || !embeddings[0]?.embedding) {
+      throw new Error('Invalid embedding response');
     }
+    return embeddings[0].embedding;
   }
 
-  async ensureCollection(): Promise<void> {
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-    const dim = this.configService.get<number>('dashscope.embeddingDim')!;
-
-    try {
-      // Check if collection exists
-      await axios.get(`${qdrantUrl}/collections/${collection}`);
-    } catch {
-      // Create collection if not exists
-      await axios.put(`${qdrantUrl}/collections/${collection}`, {
-        vectors: {
-          size: dim,
-          distance: 'Cosine',
-        },
-      });
-      console.log(`[Qdrant] Created collection: ${collection}`);
+  async search(query: string, limit = 5): Promise<SearchResult[]> {
+    const normalizedQuery = String(query || '').trim();
+    if (!normalizedQuery) {
+      return [];
     }
+
+    const embedding = await this.getEmbedding(normalizedQuery);
+    const response = await axios.post(
+      `${this.getQdrantUrl()}/collections/${this.getCollectionName()}/points/search`,
+      {
+        vector: embedding,
+        limit,
+        with_payload: true,
+      },
+    );
+
+    return (response.data.result || []).map((point: any) => ({
+      content: String(point.payload?.text || point.payload?.impressionAbstract || point.payload?.content || ''),
+      score: Number(point.score || 0),
+    }));
   }
 
   async getUserImpressions(userId: number): Promise<ImpressionRecord[]> {
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-
-    try {
-      // Use scroll API to get all points for this user
-      const response = await axios.post(
-        `${qdrantUrl}/collections/${collection}/points/scroll`,
-        {
-          filter: {
-            must: [
-              {
-                key: 'userId',
-                match: { value: userId },
-              },
-            ],
-          },
-          with_payload: true,
-          limit: 1000,
-        },
-      );
-
-      const points = response.data.result?.points || [];
-      return this.sortByRecent(points.map((point: any) => this.mapPointToImpressionRecord(point)));
-    } catch (error: any) {
-      console.error('[Qdrant] Get user impressions error:', error?.message);
+    const lines = await this.memoryService.getAllLines(userId);
+    if (!lines.length) {
       return [];
     }
+
+    const lineIds = lines.map((line) => line.id);
+    const leafPointsByLineId = await this.memoryService.getLeafPointsByLineIds(lineIds);
+
+    return lines.map((line) => this.mapLineToImpressionRecord(line, leafPointsByLineId[line.id] || []));
   }
 
   async getRecentUserImpressions(
@@ -254,12 +244,15 @@ export class ImpressionsService {
     limit = 5,
     days = 7,
   ): Promise<ImpressionRecord[]> {
-    const impressions = await this.getUserImpressions(userId);
-    const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+    const lines = await this.memoryService.getRecentLines(userId, limit, days);
+    if (!lines.length) {
+      return [];
+    }
 
-    return impressions
-      .filter((record) => this.getRecordTimestamp(record) >= cutoff)
-      .slice(0, limit);
+    const lineIds = lines.map((line) => line.id);
+    const leafPointsByLineId = await this.memoryService.getLeafPointsByLineIds(lineIds);
+
+    return lines.map((line) => this.mapLineToImpressionRecord(line, leafPointsByLineId[line.id] || []));
   }
 
   async searchUserImpressions(
@@ -273,182 +266,72 @@ export class ImpressionsService {
     }
 
     const embedding = await this.getEmbedding(normalizedQuery);
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-
-    try {
-      const response = await axios.post(
-        `${qdrantUrl}/collections/${collection}/points/search`,
-        {
-          vector: embedding,
-          limit,
-          with_payload: true,
-          filter: {
-            must: [
-              {
-                key: 'userId',
-                match: { value: userId },
-              },
-            ],
-          },
+    const response = await axios.post(
+      `${this.getQdrantUrl()}/collections/${this.getCollectionName()}/points/search`,
+      {
+        vector: embedding,
+        limit: Math.max(limit * 4, 12),
+        with_payload: true,
+        filter: {
+          must: [
+            {
+              key: 'userId',
+              match: { value: userId },
+            },
+          ],
         },
-      );
-
-      return (response.data.result || []).map((point: any) => this.mapPointToImpressionRecord(point));
-    } catch (error: any) {
-      console.error('[Qdrant] Search user impressions error:', error?.message);
-      return [];
-    }
-  }
-
-  async recordImpressionEdge(params: RecordImpressionEdgeParams): Promise<{ created: boolean }> {
-    const {
-      userId,
-      fromImpressionId,
-      toImpressionId,
-      relationType = 'continued_from',
-      batchId,
-    } = params;
-
-    if (!fromImpressionId || !toImpressionId || fromImpressionId === toImpressionId) {
-      return { created: false };
-    }
-
-    const existing = await this.impressionEdgeRepository.findOne({
-      where: { fromImpressionId, toImpressionId, batchId },
-    });
-
-    if (existing) {
-      return { created: false };
-    }
-
-    const edge = this.impressionEdgeRepository.create({
-      userId,
-      fromImpressionId,
-      toImpressionId,
-      relationType,
-      batchId,
-    });
-    await this.impressionEdgeRepository.save(edge);
-    return { created: true };
-  }
-
-  async recordImpressionMessageLinks(
-    params: RecordImpressionMessageLinksParams,
-  ): Promise<{ created: number }> {
-    const impressionId = params.impressionId?.trim();
-    const batchId = params.batchId?.trim();
-    const uniqueMessageIds = Array.from(
-      new Set((params.messageIds || []).map((messageId) => Number(messageId)).filter(Number.isInteger)),
+      },
     );
 
-    if (!impressionId || !batchId || !uniqueMessageIds.length) {
-      return { created: 0 };
+    const bestByLineId = new Map<string, number>();
+    for (const point of response.data.result || []) {
+      const lineId = String(point.payload?.lineId || '').trim();
+      if (!lineId) {
+        continue;
+      }
+
+      const score = Number(point.score || 0);
+      const existing = bestByLineId.get(lineId) || 0;
+      if (score > existing) {
+        bestByLineId.set(lineId, score);
+      }
     }
 
-    const existingLinks = await this.impressionMessageLinkRepository.find({
-      where: {
-        impressionId,
-        batchId,
-        messageId: In(uniqueMessageIds),
-      },
-    });
+    const records = await this.hydrateLineSummaries(
+      Array.from(bestByLineId.entries()).map(([lineId, score]) => ({ lineId, score })),
+    );
 
-    const existingMessageIds = new Set(existingLinks.map((link) => link.messageId));
-    const toInsert = uniqueMessageIds
-      .filter((messageId) => !existingMessageIds.has(messageId))
-      .map((messageId) => this.impressionMessageLinkRepository.create({
-        impressionId,
-        messageId,
-        batchId,
-      }));
+    return records
+      .sort((left, right) => {
+        const rightEffective = computeEffectiveScore(right);
+        const leftEffective = computeEffectiveScore(left);
+        if (rightEffective !== leftEffective) {
+          return rightEffective - leftEffective;
+        }
 
-    if (!toInsert.length) {
-      return { created: 0 };
-    }
-
-    await this.impressionMessageLinkRepository.save(toInsert);
-    return { created: toInsert.length };
+        return new Date(right.lastActivatedAt || right.updatedAt || right.createdAt).getTime()
+          - new Date(left.lastActivatedAt || left.updatedAt || left.createdAt).getTime();
+      })
+      .slice(0, limit);
   }
 
   async getImpressionsByIds(ids: string[]): Promise<ImpressionRecord[]> {
-    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-    if (!uniqueIds.length) {
-      return [];
-    }
-
-    const qdrantUrl = this.getQdrantUrl();
-    const collection = this.getCollectionName();
-
-    try {
-      const response = await axios.post(
-        `${qdrantUrl}/collections/${collection}/points`,
-        {
-          ids: uniqueIds,
-          with_payload: true,
-        },
-      );
-
-      const raw = response.data.result;
-      const points = Array.isArray(raw) ? raw : raw?.points || [];
-      return points.map((point: any) => this.mapPointToImpressionRecord(point));
-    } catch (error: any) {
-      console.error('[Qdrant] Get impressions by ids error:', error?.message);
-      return [];
-    }
+    return this.hydrateLineSummaries(ids.map((lineId) => ({ lineId, score: 0 })));
   }
 
-  async getImpressionSources(impressionId: string): Promise<ImpressionSourceRecord[]> {
-    const edges = await this.impressionEdgeRepository.find({
-      where: { toImpressionId: impressionId },
-      order: { createdAt: 'ASC' },
-    });
-
-    if (!edges.length) {
-      return [];
-    }
-
-    const sourceRecords = await this.getImpressionsByIds(edges.map((edge) => edge.fromImpressionId));
-    const sourceById = new Map(sourceRecords.map((record) => [record.id, record]));
-
-    return edges.map((edge) => ({
-      relationType: edge.relationType,
-      batchId: edge.batchId,
-      createdAt: edge.createdAt.toISOString(),
-      source: sourceById.get(edge.fromImpressionId) || null,
-    }));
+  async getImpressionSources(_impressionId: string): Promise<ImpressionSourceRecord[]> {
+    return [];
   }
 
   async getImpressionMessages(impressionId: string): Promise<ImpressionMessageRecord[]> {
-    const links = await this.impressionMessageLinkRepository.find({
-      where: { impressionId },
-      order: { createdAt: 'ASC', id: 'ASC' },
-    });
+    return this.memoryService.getLineMessages(impressionId);
+  }
 
-    if (!links.length) {
-      return [];
-    }
+  async recordImpressionEdge(_params?: unknown): Promise<{ created: boolean }> {
+    return { created: false };
+  }
 
-    const messageIds = Array.from(new Set(links.map((link) => link.messageId)));
-    const messages = await this.chatMessageRepository.find({
-      where: { id: In(messageIds) },
-      order: { createdAt: 'ASC', id: 'ASC' },
-    });
-    const messageById = new Map(messages.map((message) => [message.id, message]));
-
-    return links.map((link) => {
-      const message = messageById.get(link.messageId);
-      return {
-        batchId: link.batchId,
-        linkedAt: link.createdAt.toISOString(),
-        message: message ? {
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          sessionId: message.chatSessionId,
-          createdAt: message.createdAt.toISOString(),
-        } : null,
-      };
-    });
+  async recordImpressionMessageLinks(_params?: unknown): Promise<{ created: number }> {
+    return { created: 0 };
   }
 }
