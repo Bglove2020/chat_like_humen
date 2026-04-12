@@ -33,6 +33,7 @@ async function bootstrap() {
   console.log('  POST /api/login');
   console.log('  POST /api/chat (requires auth)');
   console.log('  POST /api/chat-context');
+  console.log('  POST /api/memory-compare/search');
   console.log('  POST /api/retrieve');
 }
 

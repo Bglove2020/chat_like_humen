@@ -12,6 +12,7 @@ export default () => ({
   qdrant: {
     url: process.env.QDRANT_URL || 'http://localhost:6333',
     collectionName: process.env.QDRANT_COLLECTION_NAME || 'user_impressions',
+    profileCollectionName: process.env.QDRANT_PROFILE_COLLECTION_NAME || 'user_profile_memories',
   },
 
   dashscope: {
@@ -24,7 +25,7 @@ export default () => ({
     qwenUrl:
       process.env.DASHSCOPE_QWEN_URL ||
       'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-    qwenModel: process.env.DASHSCOPE_QWEN_MODEL || 'qwen3-max',
+    qwenModel: process.env.DASHSCOPE_QWEN_MODEL || 'qwen3.6-plus',
     enableThinking: process.env.DASHSCOPE_ENABLE_THINKING,
   },
 

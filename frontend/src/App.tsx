@@ -3,6 +3,7 @@ import { useAuthStore } from './stores/auth';
 import Login from './pages/Login';
 import Chat from './pages/Chat';
 import Summaries from './pages/Summaries';
+import MemoryCompare from './pages/MemoryCompare';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -29,6 +30,14 @@ function App() {
         element={
           <ProtectedRoute>
             <Summaries />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/memory-compare"
+        element={
+          <ProtectedRoute>
+            <MemoryCompare />
           </ProtectedRoute>
         }
       />

@@ -92,9 +92,14 @@ export default function Summaries() {
           </button>
           <h1 className="page-title">Memory Impressions</h1>
         </div>
-        <button className="logout-button" onClick={handleLogout}>
-          Logout
-        </button>
+        <div className="header-actions">
+          <button className="memory-button" onClick={() => navigate('/memory-compare')}>
+            Compare
+          </button>
+          <button className="logout-button" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
       </header>
 
       <main className="summaries-main">

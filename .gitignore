@@ -36,6 +36,8 @@ redis_data/
 redis_data_dev/
 qdrant_storage/
 qdrant_storage_dev/
+mem0_history/
+mem0_history_dev/
 test-results/
 .playwright/
 playwright-report/

@@ -1,13 +1,10 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { ImpressionsService } from './impressions.service';
 import { ImpressionsController } from './impressions.controller';
-import { ImpressionEdge } from './impression-edge.entity';
-import { ImpressionMessageLink } from './impression-message-link.entity';
-import { ChatMessage } from '../chat/chat_message.entity';
+import { MemoryModule } from '../memory/memory.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ImpressionEdge, ImpressionMessageLink, ChatMessage])],
+  imports: [MemoryModule],
   providers: [ImpressionsService],
   controllers: [ImpressionsController],
   exports: [ImpressionsService],

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ChatMessageService } from './chat_message.service';
 import { ChatMessage } from './chat_message.entity';
 import { ImpressionRecord, ImpressionsService } from '../impressions/impressions.service';
+import { UserProfileFields, UserProfilePreferenceContextItem, UserProfileService } from '../users/user-profile.service';
 
 type ContextSource = 'recent' | 'window' | 'latest';
 
@@ -20,6 +21,10 @@ export interface ChatContextResponse {
     points: string[];
     time: string;
   }>;
+  userProfile: {
+    structured: UserProfileFields;
+    preferences: UserProfilePreferenceContextItem[];
+  };
 }
 
 const DEFAULT_CONTEXT_LIMIT = 6;
@@ -53,6 +58,7 @@ export class ChatContextService {
   constructor(
     private chatMessageService: ChatMessageService,
     private impressionsService: ImpressionsService,
+    private userProfileService: UserProfileService,
   ) {}
 
   async getContext(userId: number, message: string, limit = DEFAULT_CONTEXT_LIMIT): Promise<ChatContextResponse> {
@@ -62,13 +68,23 @@ export class ChatContextService {
     const windowQuery = this.buildWindowQuery(historyMessages);
     const latestQuery = this.buildLatestQuery(latestHistoryMessages, message);
 
-    const [recentImpressions, windowRecall, latestRecall] = await Promise.all([
+    const [
+      recentImpressions,
+      windowRecall,
+      latestRecall,
+      structuredProfile,
+      preferenceProfile,
+    ] = await Promise.all([
       this.impressionsService.getRecentUserImpressions(userId, RECENT_IMPRESSION_LIMIT, 7),
       windowQuery
         ? this.impressionsService.searchUserImpressions(userId, windowQuery, SEARCH_LIMIT)
         : Promise.resolve([]),
       latestQuery
         ? this.impressionsService.searchUserImpressions(userId, latestQuery, SEARCH_LIMIT)
+        : Promise.resolve([]),
+      this.userProfileService.getStructuredProfile(userId),
+      latestQuery
+        ? this.userProfileService.searchPreferenceMemories(userId, latestQuery, 5)
         : Promise.resolve([]),
     ]);
 
@@ -85,6 +101,10 @@ export class ChatContextService {
         points: item.points,
         time: this.formatBeijingTime(item),
       })),
+      userProfile: {
+        structured: structuredProfile,
+        preferences: preferenceProfile,
+      },
     };
   }
 
@@ -215,69 +235,6 @@ export class ChatContextService {
     ).toFixed(6));
   }
 
-  private async hydrateAncestors(candidates: ContextCandidate[]): Promise<ImpressionRecord[]> {
-    const knownById = new Map(candidates.map((candidate) => [candidate.id, candidate as ImpressionRecord]));
-    let frontier = candidates
-      .map((candidate) => candidate.sourceImpressionId)
-      .filter((id): id is string => Boolean(id && !knownById.has(id)));
-
-    while (frontier.length) {
-      const ancestors = await this.impressionsService.getImpressionsByIds(frontier);
-      if (!ancestors.length) {
-        break;
-      }
-
-      for (const ancestor of ancestors) {
-        if (!knownById.has(ancestor.id)) {
-          knownById.set(ancestor.id, ancestor);
-        }
-      }
-
-      frontier = ancestors
-        .map((ancestor) => ancestor.sourceImpressionId)
-        .filter((id): id is string => Boolean(id && !knownById.has(id)));
-    }
-
-    return Array.from(knownById.values());
-  }
-
-  private collectAncestorIds(
-    impressionId: string,
-    allKnownImpressions: Map<string, Pick<ImpressionRecord, 'id' | 'sourceImpressionId'>>,
-  ): Set<string> {
-    const ancestorIds = new Set<string>();
-    const visited = new Set<string>();
-    let current = allKnownImpressions.get(impressionId);
-
-    while (current?.sourceImpressionId && !visited.has(current.sourceImpressionId)) {
-      const parentId = current.sourceImpressionId;
-      ancestorIds.add(parentId);
-      visited.add(parentId);
-      current = allKnownImpressions.get(parentId);
-    }
-
-    return ancestorIds;
-  }
-
-  private dedupeByAncestorChain(
-    candidates: ContextCandidate[],
-    allKnownImpressions: ImpressionRecord[],
-  ): ContextCandidate[] {
-    const knownById = new Map(allKnownImpressions.map((record) => [record.id, record]));
-    const removedIds = new Set<string>();
-
-    for (const candidate of candidates) {
-      const ancestorIds = this.collectAncestorIds(candidate.id, knownById);
-      for (const ancestorId of ancestorIds) {
-        if (candidates.some((item) => item.id === ancestorId)) {
-          removedIds.add(ancestorId);
-        }
-      }
-    }
-
-    return candidates.filter((candidate) => !removedIds.has(candidate.id));
-  }
-
   private async mergeAndRankCandidates(
     recentImpressions: ImpressionRecord[],
     windowRecall: ImpressionRecord[],
@@ -311,8 +268,9 @@ export class ChatContextService {
       return [];
     }
 
-    const withAncestors = await this.hydrateAncestors(candidates);
-    const deduped = this.dedupeByAncestorChain(candidates, withAncestors)
+    const deduped = Array.from(
+      new Map(candidates.map((candidate) => [candidate.id, candidate])).values(),
+    )
       .sort((left, right) => {
         if (right.finalScore !== left.finalScore) {
           return right.finalScore - left.finalScore;

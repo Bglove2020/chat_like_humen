@@ -9,9 +9,10 @@ import { ChatSession } from './chat_session.entity';
 import { ChatSessionService } from './chat_session.service';
 import { ChatContextService } from './chat-context.service';
 import { ImpressionsModule } from '../impressions/impressions.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [QueueModule, ImpressionsModule, TypeOrmModule.forFeature([ChatMessage, ChatSession])],
+  imports: [QueueModule, ImpressionsModule, UsersModule, TypeOrmModule.forFeature([ChatMessage, ChatSession])],
   providers: [ChatService, ChatMessageService, ChatSessionService, ChatContextService],
   controllers: [ChatController],
   exports: [ChatMessageService, ChatSessionService],
