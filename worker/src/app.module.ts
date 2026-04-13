@@ -26,6 +26,7 @@ const appEnv = process.env.NODE_ENV || 'development';
           host: configService.get<string>('redis.host'),
           port: configService.get<number>('redis.port'),
           password: configService.get<string>('redis.password'),
+          db: configService.get<number>('redis.db'),
         },
         prefix: 'bull',
       }),

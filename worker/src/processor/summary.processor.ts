@@ -22,6 +22,7 @@ export class SummaryProcessor extends WorkerHost {
       host: this.configService.get<string>('redis.host') || 'localhost',
       port: this.configService.get<number>('redis.port') || 6379,
       password: this.configService.get<string>('redis.password') || undefined,
+      db: this.configService.get<number>('redis.db') || 0,
     });
     console.log('[Processor] Redis lock connection initialized');
   }

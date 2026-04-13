@@ -31,4 +31,5 @@ npm run start:prod
 ```
 
 If worker and `common_core` are not on the same machine, update `BACKEND_INTERNAL_URL`.
+Set `REDIS_DB` to the same Redis database index used by `common_core`.
 If Qdrant is not local to the worker host, update `QDRANT_URL` in both env files.
