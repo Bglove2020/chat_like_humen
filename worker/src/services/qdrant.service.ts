@@ -36,7 +36,6 @@ interface BackendLineRecord extends MemoryLineCandidate {
 interface BackendPointRecord {
   id: string;
   openId: string;
-  sessionId: string | null;
   lineId: string;
   op: MemoryPointOp;
   sourcePointId: string | null;
@@ -62,7 +61,6 @@ interface RecallBucket {
 
 interface QdrantLeafPayload {
   openId: string;
-  sessionId: string | null;
   lineId: string;
   op: MemoryPointOp;
   sourcePointId: string | null;
@@ -93,17 +91,27 @@ const RECENT_LINE_LIMIT = 10;
 const KEYWORD_LINE_LIMIT = 10;
 
 function normalizeText(value: string, maxLength: number): string {
-  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
 }
 
 function buildLineCandidate(line: BackendLineRecord): MemoryLineCandidate {
   return {
     id: line.id,
     anchorLabel: normalizeText(line.anchorLabel || '', 120),
-    impressionLabel: normalizeText(line.impressionLabel || line.anchorLabel || '', 120),
+    impressionLabel: normalizeText(
+      line.impressionLabel || line.anchorLabel || '',
+      120,
+    ),
     impressionAbstract: normalizeText(line.impressionAbstract || '', 360),
     salienceScore: Number(line.salienceScore || INITIAL_SALIENCE_SCORE),
-    lastActivatedAt: line.lastActivatedAt || line.updatedAt || line.createdAt || new Date().toISOString(),
+    lastActivatedAt:
+      line.lastActivatedAt ||
+      line.updatedAt ||
+      line.createdAt ||
+      new Date().toISOString(),
   };
 }
 
@@ -148,25 +156,39 @@ export class QdrantService {
     const line = buildLineCandidate({
       id: String(payload.lineId || ''),
       anchorLabel: String(payload.anchorLabel || ''),
-      impressionLabel: String(payload.impressionLabel || payload.anchorLabel || ''),
+      impressionLabel: String(
+        payload.impressionLabel || payload.anchorLabel || '',
+      ),
       impressionAbstract: String(payload.impressionAbstract || ''),
-      salienceScore: Number(payload.lineSalienceScore || payload.salienceScore || INITIAL_SALIENCE_SCORE),
-      lastActivatedAt: String(payload.lineLastActivatedAt || payload.updatedAt || payload.createdAt || ''),
+      salienceScore: Number(
+        payload.lineSalienceScore ||
+          payload.salienceScore ||
+          INITIAL_SALIENCE_SCORE,
+      ),
+      lastActivatedAt: String(
+        payload.lineLastActivatedAt ||
+          payload.updatedAt ||
+          payload.createdAt ||
+          '',
+      ),
     });
 
     return {
       id: String(point.id),
       lineId: String(payload.lineId || ''),
-      op: ['new', 'supplement', 'revise', 'conflict'].includes(String(payload.op))
-        ? payload.op as MemoryPointOp
+      op: ['new', 'supplement', 'revise', 'conflict'].includes(
+        String(payload.op),
+      )
+        ? (payload.op as MemoryPointOp)
         : 'new',
-      sourcePointId: payload.sourcePointId ? String(payload.sourcePointId) : null,
+      sourcePointId: payload.sourcePointId
+        ? String(payload.sourcePointId)
+        : null,
       text: normalizeText(String(payload.text || ''), 220),
       memoryDate: String(payload.memoryDate || ''),
       salienceScore: Number(payload.salienceScore || INITIAL_SALIENCE_SCORE),
       createdAt: String(payload.createdAt || ''),
       updatedAt: String(payload.updatedAt || ''),
-      sessionId: payload.sessionId ? String(payload.sessionId) : null,
       relevanceScore: Number(point.score || 0),
       line,
     };
@@ -218,10 +240,14 @@ export class QdrantService {
       },
     );
 
-    return (response.data.result || []).map((point: any) => this.mapPointHit(point));
+    return (response.data.result || []).map((point: any) =>
+      this.mapPointHit(point),
+    );
   }
 
-  private async getPointById(pointId: string): Promise<RetrievedMemoryPoint | null> {
+  private async getPointById(
+    pointId: string,
+  ): Promise<RetrievedMemoryPoint | null> {
     if (!pointId) {
       return null;
     }
@@ -238,7 +264,9 @@ export class QdrantService {
     return points[0] ? this.mapPointHit(points[0]) : null;
   }
 
-  private async getLeafPointsForLine(lineId: string): Promise<RetrievedMemoryPoint[]> {
+  private async getLeafPointsForLine(
+    lineId: string,
+  ): Promise<RetrievedMemoryPoint[]> {
     if (!lineId) {
       return [];
     }
@@ -259,14 +287,18 @@ export class QdrantService {
       },
     );
 
-    return (response.data.result?.points || []).map((point: any) => this.mapPointHit(point));
+    return (response.data.result?.points || []).map((point: any) =>
+      this.mapPointHit(point),
+    );
   }
 
-  private async upsertLeafPoint(point: BackendPointRecord, line: BackendLineRecord): Promise<void> {
+  private async upsertLeafPoint(
+    point: BackendPointRecord,
+    line: BackendLineRecord,
+  ): Promise<void> {
     const embedding = await this.dashscopeService.getEmbedding(point.text);
     const payload: QdrantLeafPayload = {
       openId: point.openId,
-      sessionId: point.sessionId,
       lineId: point.lineId,
       op: point.op,
       sourcePointId: point.sourcePointId,
@@ -279,7 +311,11 @@ export class QdrantService {
       impressionLabel: line.impressionLabel || line.anchorLabel,
       impressionAbstract: line.impressionAbstract || '',
       lineSalienceScore: Number(line.salienceScore || INITIAL_SALIENCE_SCORE),
-      lineLastActivatedAt: line.lastActivatedAt || line.updatedAt || line.createdAt || new Date().toISOString(),
+      lineLastActivatedAt:
+        line.lastActivatedAt ||
+        line.updatedAt ||
+        line.createdAt ||
+        new Date().toISOString(),
       lineCreatedAt: line.createdAt || new Date().toISOString(),
       lineUpdatedAt: line.updatedAt || new Date().toISOString(),
     };
@@ -329,7 +365,10 @@ export class QdrantService {
     );
   }
 
-  private async getRecentLines(openId: string, limit = RECENT_LINE_LIMIT): Promise<BackendLineRecord[]> {
+  private async getRecentLines(
+    openId: string,
+    limit = RECENT_LINE_LIMIT,
+  ): Promise<BackendLineRecord[]> {
     const response = await axios.post(
       `${this.getBackendInternalUrl()}/internal/memory/lines/recent`,
       { openId, limit },
@@ -338,7 +377,11 @@ export class QdrantService {
     return Array.isArray(response.data) ? response.data : [];
   }
 
-  private async searchLinesByKeywords(openId: string, query: string, limit = KEYWORD_LINE_LIMIT): Promise<BackendLineRecord[]> {
+  private async searchLinesByKeywords(
+    openId: string,
+    query: string,
+    limit = KEYWORD_LINE_LIMIT,
+  ): Promise<BackendLineRecord[]> {
     const response = await axios.post(
       `${this.getBackendInternalUrl()}/internal/memory/lines/keyword-search`,
       { openId, query, limit },
@@ -356,7 +399,9 @@ export class QdrantService {
     return Array.isArray(response.data) ? response.data : [];
   }
 
-  private async getLeafPointsByLineIds(lineIds: string[]): Promise<Record<string, BackendPointRecord[]>> {
+  private async getLeafPointsByLineIds(
+    lineIds: string[],
+  ): Promise<Record<string, BackendPointRecord[]>> {
     const response = await axios.post(
       `${this.getBackendInternalUrl()}/internal/memory/lines/leaf-points`,
       { lineIds },
@@ -403,7 +448,6 @@ export class QdrantService {
 
   private async createPoint(params: {
     openId: string;
-    sessionId?: string;
     lineId: string;
     op: MemoryPointOp;
     sourcePointId: string | null;
@@ -415,7 +459,6 @@ export class QdrantService {
       `${this.getBackendInternalUrl()}/internal/memory/points`,
       {
         openId: params.openId,
-        sessionId: params.sessionId || null,
         lineId: params.lineId,
         op: params.op,
         sourcePointId: params.sourcePointId,
@@ -431,14 +474,12 @@ export class QdrantService {
   private async updatePointInPlace(params: {
     pointId: string;
     text: string;
-    batchId: string;
     salienceScore: number;
   }): Promise<BackendPointRecord | null> {
     const response = await axios.patch(
       `${this.getBackendInternalUrl()}/internal/memory/points/${params.pointId}`,
       {
         text: params.text,
-        batchId: params.batchId,
         salienceScore: params.salienceScore,
       },
       this.getBackendRequestConfig(),
@@ -446,9 +487,16 @@ export class QdrantService {
     return response.data || null;
   }
 
-  private async recordPointMessageLinks(pointId: string, messageIds: number[], batchId: string): Promise<void> {
+  private async recordPointMessageLinks(
+    pointId: string,
+    messageIds: number[],
+  ): Promise<void> {
     const uniqueMessageIds = Array.from(
-      new Set((messageIds || []).map((messageId) => Number(messageId)).filter(Number.isInteger)),
+      new Set(
+        (messageIds || [])
+          .map((messageId) => Number(messageId))
+          .filter(Number.isInteger),
+      ),
     );
     if (!pointId || !uniqueMessageIds.length) {
       return;
@@ -459,20 +507,22 @@ export class QdrantService {
       {
         pointId,
         messageIds: uniqueMessageIds,
-        batchId,
       },
       this.getBackendRequestConfig(),
     );
   }
 
-  private sortRecalledPoints(points: RetrievedMemoryPoint[]): RetrievedMemoryPoint[] {
+  private sortRecalledPoints(
+    points: RetrievedMemoryPoint[],
+  ): RetrievedMemoryPoint[] {
     return [...points].sort((left, right) => {
       const rightScore = computeEffectiveScore({
         id: right.id,
         createdAt: right.createdAt,
         updatedAt: right.updatedAt,
         salienceScore: right.salienceScore,
-        lastActivatedAt: right.line.lastActivatedAt || right.updatedAt || right.createdAt,
+        lastActivatedAt:
+          right.line.lastActivatedAt || right.updatedAt || right.createdAt,
         relevanceScore: right.relevanceScore || 0,
       });
       const leftScore = computeEffectiveScore({
@@ -480,19 +530,25 @@ export class QdrantService {
         createdAt: left.createdAt,
         updatedAt: left.updatedAt,
         salienceScore: left.salienceScore,
-        lastActivatedAt: left.line.lastActivatedAt || left.updatedAt || left.createdAt,
+        lastActivatedAt:
+          left.line.lastActivatedAt || left.updatedAt || left.createdAt,
         relevanceScore: left.relevanceScore || 0,
       });
       if (rightScore !== leftScore) {
         return rightScore - leftScore;
       }
 
-      return new Date(right.updatedAt || right.createdAt).getTime()
-        - new Date(left.updatedAt || left.createdAt).getTime();
+      return (
+        new Date(right.updatedAt || right.createdAt).getTime() -
+        new Date(left.updatedAt || left.createdAt).getTime()
+      );
     });
   }
 
-  private async recallPointsForDrafts(openId: string, drafts: RetrievalDrafts): Promise<RetrievedMemoryPoint[]> {
+  private async recallPointsForDrafts(
+    openId: string,
+    drafts: RetrievalDrafts,
+  ): Promise<RetrievedMemoryPoint[]> {
     const buckets: RecallBucket[] = [];
 
     for (const draft of [
@@ -505,7 +561,11 @@ export class QdrantService {
         continue;
       }
 
-      const points = await this.searchPoints(openId, normalizedQuery, QUERY_RECALL_LIMIT);
+      const points = await this.searchPoints(
+        openId,
+        normalizedQuery,
+        QUERY_RECALL_LIMIT,
+      );
       buckets.push({ kind: draft.kind, query: normalizedQuery, points });
     }
 
@@ -513,7 +573,9 @@ export class QdrantService {
     for (const bucket of buckets) {
       const weight = DRAFT_WEIGHTS[bucket.kind];
       for (const point of bucket.points) {
-        const weightedScore = Number(((point.relevanceScore || 0) * weight).toFixed(6));
+        const weightedScore = Number(
+          ((point.relevanceScore || 0) * weight).toFixed(6),
+        );
         const existing = merged.get(point.id);
         if (!existing || weightedScore > (existing.relevanceScore || 0)) {
           merged.set(point.id, {
@@ -524,7 +586,10 @@ export class QdrantService {
       }
     }
 
-    return this.sortRecalledPoints(Array.from(merged.values())).slice(0, FINAL_RECALL_LIMIT);
+    return this.sortRecalledPoints(Array.from(merged.values())).slice(
+      0,
+      FINAL_RECALL_LIMIT,
+    );
   }
 
   private upsertCandidateLine(
@@ -564,13 +629,21 @@ export class QdrantService {
     }
 
     for (const line of keywordLines) {
-      this.upsertCandidateLine(bucket, buildLineCandidate(line), 'keyword', 0.45);
+      this.upsertCandidateLine(
+        bucket,
+        buildLineCandidate(line),
+        'keyword',
+        0.45,
+      );
     }
 
     const bestVectorScoreByLine = new Map<string, RetrievedMemoryPoint>();
     for (const point of vectorPoints) {
       const existing = bestVectorScoreByLine.get(point.lineId);
-      if (!existing || (point.relevanceScore || 0) > (existing.relevanceScore || 0)) {
+      if (
+        !existing ||
+        (point.relevanceScore || 0) > (existing.relevanceScore || 0)
+      ) {
         bestVectorScoreByLine.set(point.lineId, point);
       }
     }
@@ -590,7 +663,10 @@ export class QdrantService {
           return right.recallScore - left.recallScore;
         }
 
-        return new Date(right.lastActivatedAt).getTime() - new Date(left.lastActivatedAt).getTime();
+        return (
+          new Date(right.lastActivatedAt).getTime() -
+          new Date(left.lastActivatedAt).getTime()
+        );
       })
       .slice(0, CANDIDATE_LINE_LIMIT)
       .map((line) => ({
@@ -642,15 +718,18 @@ export class QdrantService {
         continue;
       }
 
-        await this.patchLeafPointPayloads(
-          leafPoints.map((point) => point.id),
-          {
-            anchorLabel: nextLine.anchorLabel,
-            impressionLabel: nextLine.impressionLabel,
-            impressionAbstract: nextLine.impressionAbstract,
-            lineSalienceScore: Number(nextLine.salienceScore || INITIAL_SALIENCE_SCORE),
-            lineLastActivatedAt: nextLine.lastActivatedAt || new Date().toISOString(),
-            lineCreatedAt: nextLine.createdAt || new Date().toISOString(),
+      await this.patchLeafPointPayloads(
+        leafPoints.map((point) => point.id),
+        {
+          anchorLabel: nextLine.anchorLabel,
+          impressionLabel: nextLine.impressionLabel,
+          impressionAbstract: nextLine.impressionAbstract,
+          lineSalienceScore: Number(
+            nextLine.salienceScore || INITIAL_SALIENCE_SCORE,
+          ),
+          lineLastActivatedAt:
+            nextLine.lastActivatedAt || new Date().toISOString(),
+          lineCreatedAt: nextLine.createdAt || new Date().toISOString(),
           lineUpdatedAt: nextLine.updatedAt || new Date().toISOString(),
         },
       );
@@ -659,23 +738,24 @@ export class QdrantService {
 
   private async processSourcePointDrafts(params: {
     openId: string;
-    sessionId?: string;
-    batchId: string;
     batchMemoryDate: string;
     linkedMessages: ChatMessage[];
     pointDrafts: Node2PointDraft[];
     recalledPoints: RetrievedMemoryPoint[];
     dirtyLineIds: Set<string>;
   }): Promise<void> {
-    const recalledById = new Map(params.recalledPoints.map((point) => [point.id, point]));
+    const recalledById = new Map(
+      params.recalledPoints.map((point) => [point.id, point]),
+    );
 
     for (const draft of params.pointDrafts) {
       if (draft.op === 'new' || !draft.sourcePointId) {
         continue;
       }
 
-      const source = recalledById.get(draft.sourcePointId)
-        || await this.getPointById(draft.sourcePointId);
+      const source =
+        recalledById.get(draft.sourcePointId) ||
+        (await this.getPointById(draft.sourcePointId));
       if (!source) {
         continue;
       }
@@ -685,7 +765,6 @@ export class QdrantService {
         const updatedPoint = await this.updatePointInPlace({
           pointId: source.id,
           text: draft.text,
-          batchId: params.batchId,
           salienceScore: nextSalienceScore,
         });
         if (!updatedPoint) {
@@ -696,12 +775,10 @@ export class QdrantService {
         await this.recordPointMessageLinks(
           updatedPoint.id,
           this.resolveMessageIds(params.linkedMessages),
-          params.batchId,
         );
       } else {
         const createdPoint = await this.createPoint({
           openId: params.openId,
-          sessionId: params.sessionId,
           lineId: source.lineId,
           op: draft.op,
           sourcePointId: source.id,
@@ -714,7 +791,6 @@ export class QdrantService {
         await this.recordPointMessageLinks(
           createdPoint.id,
           this.resolveMessageIds(params.linkedMessages),
-          params.batchId,
         );
       }
 
@@ -724,8 +800,6 @@ export class QdrantService {
 
   private async processNewPointDrafts(params: {
     openId: string;
-    sessionId?: string;
-    batchId: string;
     batchMemoryDate: string;
     linkedMessages: ChatMessage[];
     pointDrafts: Node2PointDraft[];
@@ -776,7 +850,6 @@ export class QdrantService {
 
       const createdPoint = await this.createPoint({
         openId: params.openId,
-        sessionId: params.sessionId,
         lineId: line.id,
         op: 'new',
         sourcePointId: null,
@@ -788,7 +861,6 @@ export class QdrantService {
       await this.recordPointMessageLinks(
         createdPoint.id,
         this.resolveMessageIds(params.linkedMessages),
-        params.batchId,
       );
       params.dirtyLineIds.add(line.id);
     }
@@ -815,7 +887,6 @@ export class QdrantService {
 
         const createdPoint = await this.createPoint({
           openId: params.openId,
-          sessionId: params.sessionId,
           lineId: line.id,
           op: 'new',
           sourcePointId: null,
@@ -827,7 +898,6 @@ export class QdrantService {
         await this.recordPointMessageLinks(
           createdPoint.id,
           this.resolveMessageIds(params.linkedMessages),
-          params.batchId,
         );
       }
 
@@ -836,9 +906,11 @@ export class QdrantService {
   }
 
   async processSummaryJob(data: SummaryJobData): Promise<void> {
-    const { openId, sessionId, date, batchId, messages } = data;
+    const { openId, date, batchId, messages } = data;
     const startedAt = Date.now();
-    const historyMessages = messages.filter((message) => message.isNew === false);
+    const historyMessages = messages.filter(
+      (message) => message.isNew === false,
+    );
     const newMessages = messages.filter((message) => message.isNew !== false);
     const dirtyLineIds = new Set<string>();
 
@@ -866,7 +938,7 @@ export class QdrantService {
     });
     const node2CandidateAnalysis = Array.isArray(node2PointResult)
       ? null
-      : (node2PointResult.candidateAnalysis || null);
+      : node2PointResult.candidateAnalysis || null;
     const node2Points = Array.isArray(node2PointResult)
       ? node2PointResult
       : node2PointResult.points;
@@ -884,8 +956,6 @@ export class QdrantService {
 
     await this.processSourcePointDrafts({
       openId,
-      sessionId,
-      batchId,
       batchMemoryDate: date,
       linkedMessages: newMessages,
       pointDrafts: node2Points,
@@ -895,8 +965,6 @@ export class QdrantService {
 
     await this.processNewPointDrafts({
       openId,
-      sessionId,
-      batchId,
       batchMemoryDate: date,
       linkedMessages: newMessages,
       pointDrafts: node2Points,

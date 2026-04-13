@@ -73,7 +73,6 @@ export interface RetrievedMemoryPoint {
   salienceScore: number;
   createdAt: string;
   updatedAt: string;
-  sessionId: string | null;
   relevanceScore?: number;
   line: MemoryLineCandidate;
 }
