@@ -30,7 +30,6 @@ function createMemory(
     strengthScore: 2,
     createdAt: '2026-04-10T00:00:00.000Z',
     updatedAt: '2026-04-10T00:00:00.000Z',
-    lastActivatedAt: '2026-04-10T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -46,10 +45,10 @@ describe('UserProfileMemoryService reconcile decisions', () => {
       createMemory(),
     ]);
 
-    expect(decision.action).toBe('discard');
+    expect(decision).toBe('discard');
   });
 
-  it('updates same-subject memories when the new candidate adds detail', () => {
+  it('covers same-subject memories when the new candidate adds detail', () => {
     const decision = (service as any).decideAction(
       createCandidate({
         content: 'User likes iced Americano and usually asks for less ice.',
@@ -58,10 +57,10 @@ describe('UserProfileMemoryService reconcile decisions', () => {
       [createMemory()]
     );
 
-    expect(decision.action).toBe('update');
+    expect(decision).toBe('cover');
   });
 
-  it('supersedes active memories when the same subject conflicts', () => {
+  it('covers active memories when the same subject conflicts', () => {
     const decision = (service as any).decideAction(
       createCandidate({
         content: 'User does not drink iced Americano anymore and now prefers latte.',
@@ -70,7 +69,7 @@ describe('UserProfileMemoryService reconcile decisions', () => {
       [createMemory()]
     );
 
-    expect(decision.action).toBe('supersede');
+    expect(decision).toBe('cover');
   });
 
   it('normalizes reconcile results to minimal new or cover actions', () => {
@@ -139,11 +138,11 @@ describe('UserProfileMemoryService reconcile decisions', () => {
       strengthScore: 2,
       createdAt: '2026-04-10T00:00:00.000Z',
       updatedAt: '2026-04-10T00:00:00.000Z',
-      lastActivatedAt: '2026-04-10T00:00:00.000Z',
     });
     expect((payload as any).status).toBeUndefined();
     expect((payload as any).retrievalText).toBeUndefined();
     expect((payload as any).sourceMessageIds).toBeUndefined();
     expect((payload as any).batchId).toBeUndefined();
+    expect((payload as any).lastActivatedAt).toBeUndefined();
   });
 });

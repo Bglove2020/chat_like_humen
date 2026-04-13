@@ -16,12 +16,12 @@ export interface UserProfileMemoryPayload {
   strengthScore: number;
   createdAt: string;
   updatedAt: string;
-  lastActivatedAt: string;
 }
 
 export interface UserProfileMemoryRecord extends UserProfileMemoryPayload {
   id: string;
   score: number;
+  isActive?: boolean;
 }
 
 export interface UserProfileMemoryStats {
@@ -48,12 +48,9 @@ interface BackendPreferenceMemoryPayload {
   keywords: string[];
   strengthScore: number;
   messageIds: number[];
-  lastActivatedAt: string;
 }
 
 const SAME_SUBJECT_SCORE_THRESHOLD = 0.78;
-const CHANGE_MARKER_RE =
-  /(现在|不再|改成|更喜欢|以前|最近|目前|如今|换成|开始不|不太|少了|减少|now|no longer|switched|prefer|prefer now|used to)/i;
 const DEFAULT_STRENGTH_SCORE = 1;
 const MAX_STRENGTH_SCORE = 5;
 
@@ -87,18 +84,6 @@ function normalizeKeywords(value: unknown): string[] {
   ).slice(0, 6);
 }
 
-function normalizeMessageIds(value: unknown): number[] {
-  const rawItems = Array.isArray(value) ? value : [];
-
-  return Array.from(
-    new Set(
-      rawItems
-        .map(item => Number(item))
-        .filter(item => Number.isInteger(item) && item > 0)
-    )
-  ).slice(0, 20);
-}
-
 @Injectable()
 export class UserProfileMemoryService {
   constructor(
@@ -129,7 +114,6 @@ export class UserProfileMemoryService {
         message => message.role === 'user' || message.role === 'assistant'
       )
       .filter(message => String(message.content || '').trim());
-
     const recalledByCandidate = await Promise.all(
       candidates.map(async candidate => ({
         candidate,
@@ -170,16 +154,7 @@ export class UserProfileMemoryService {
           continue;
         }
 
-        const localDecision = this.decideAction(candidate, [existing]);
-        if (localDecision.action === 'discard') {
-          stats.discarded += 1;
-          continue;
-        }
-
-        const covered =
-          localDecision.action === 'supersede'
-            ? await this.supersedeMemory(openId, candidate, existing)
-            : await this.updateMemory(openId, candidate, existing);
+        const covered = await this.coverMemory(openId, candidate, existing);
         if (covered) {
           oldMemoryById.delete(existing.id);
           oldMemoryById.set(covered.id, covered);
@@ -256,24 +231,13 @@ export class UserProfileMemoryService {
   private decideAction(
     candidate: PreferenceMemoryCandidate,
     existingMemories: UserProfileMemoryRecord[]
-  ): {
-    action: 'create' | 'update' | 'supersede' | 'discard';
-    existing?: UserProfileMemoryRecord;
-  } {
+  ): 'new' | 'cover' | 'discard' {
     const sameCore = existingMemories.find(memory =>
       this.isSameSemanticCore(candidate, memory)
     );
 
     if (sameCore) {
-      if (this.isDuplicate(candidate, sameCore)) {
-        return { action: 'discard', existing: sameCore };
-      }
-
-      if (this.hasChangeMarker(candidate)) {
-        return { action: 'supersede', existing: sameCore };
-      }
-
-      return { action: 'update', existing: sameCore };
+      return this.isDuplicate(candidate, sameCore) ? 'discard' : 'cover';
     }
 
     const related = existingMemories.find(
@@ -282,11 +246,11 @@ export class UserProfileMemoryService {
         memory.score >= SAME_SUBJECT_SCORE_THRESHOLD
     );
 
-    if (related && this.hasChangeMarker(candidate)) {
-      return { action: 'supersede', existing: related };
+    if (related) {
+      return 'cover';
     }
 
-    return { action: 'create' };
+    return 'new';
   }
 
   private isSameSemanticCore(
@@ -321,10 +285,6 @@ export class UserProfileMemoryService {
         (memoryText.includes(candidateText) ||
           candidateText.includes(memoryText)))
     );
-  }
-
-  private hasChangeMarker(candidate: PreferenceMemoryCandidate): boolean {
-    return CHANGE_MARKER_RE.test([candidate.content, ...candidate.keywords].join(' '));
   }
 
   private hasKeywordOverlap(left: string[], right: string[]): boolean {
@@ -383,9 +343,7 @@ export class UserProfileMemoryService {
   private mapPointToMemory(point: any): UserProfileMemoryRecord | null {
     const payload = point.payload || {};
     const content = normalizeText(payload.content || payload.preference, 200);
-    const keywords = normalizeKeywords(
-      payload.keywords || [payload.subject, payload.category].filter(Boolean)
-    );
+    const keywords = normalizeKeywords(payload.keywords);
 
     if (!content) {
       return null;
@@ -406,9 +364,6 @@ export class UserProfileMemoryService {
       strengthScore: Number(payload.strengthScore || DEFAULT_STRENGTH_SCORE),
       createdAt: String(payload.createdAt || ''),
       updatedAt: String(payload.updatedAt || ''),
-      lastActivatedAt: String(
-        payload.lastActivatedAt || payload.updatedAt || payload.createdAt || ''
-      ),
     };
   }
 
@@ -423,7 +378,6 @@ export class UserProfileMemoryService {
       keywords: candidate.keywords,
       strengthScore: DEFAULT_STRENGTH_SCORE,
       messageIds: candidate.evidenceMessageIds,
-      lastActivatedAt: new Date().toISOString(),
     });
     if (!memory) {
       return null;
@@ -432,40 +386,18 @@ export class UserProfileMemoryService {
     return this.upsertQdrantMemory(memory);
   }
 
-  private async updateMemory(
+  private async coverMemory(
     openId: string,
     candidate: PreferenceMemoryCandidate,
     existing: UserProfileMemoryRecord
   ): Promise<UserProfileMemoryRecord | null> {
-    const memory = await this.updateBackendMemory(existing.id, {
-      openId,
-      type: candidate.type || existing.type,
-      content: normalizeText(candidate.content || existing.content, 200),
-      keywords: candidate.keywords.length ? candidate.keywords : existing.keywords,
-      strengthScore: this.computeStrengthScore(candidate, existing),
-      messageIds: candidate.evidenceMessageIds,
-      lastActivatedAt: new Date().toISOString(),
-    });
-    if (!memory) {
-      return null;
-    }
-
-    return this.upsertQdrantMemory(memory);
-  }
-
-  private async supersedeMemory(
-    openId: string,
-    candidate: PreferenceMemoryCandidate,
-    existing: UserProfileMemoryRecord
-  ): Promise<UserProfileMemoryRecord | null> {
-    const result = await this.supersedeBackendMemory(existing.id, {
+    const result = await this.coverBackendMemory(existing.id, {
       openId,
       type: candidate.type,
       content: candidate.content,
       keywords: candidate.keywords,
-      strengthScore: DEFAULT_STRENGTH_SCORE,
+      strengthScore: this.computeStrengthScore(candidate, existing),
       messageIds: candidate.evidenceMessageIds,
-      lastActivatedAt: new Date().toISOString(),
     });
     if (!result) {
       return null;
@@ -494,40 +426,13 @@ export class UserProfileMemoryService {
     }
   }
 
-  private async updateBackendMemory(
-    preferenceId: string,
-    payload: BackendPreferenceMemoryPayload
-  ): Promise<UserProfileMemoryRecord | null> {
-    try {
-      const response = await axios.patch(
-        `${this.getBackendInternalUrl()}/internal/user-profiles/preference-memories/${preferenceId}`,
-        {
-          type: payload.type,
-          content: payload.content,
-          keywords: payload.keywords,
-          strengthScore: payload.strengthScore,
-          messageIds: payload.messageIds,
-          lastActivatedAt: payload.lastActivatedAt,
-        },
-        {
-          headers: this.getBackendHeaders(),
-        }
-      );
-
-      return this.normalizeBackendMemory(response.data);
-    } catch (error: any) {
-      console.error('[ProfileMemory] Update backend memory error:', error?.message);
-      return null;
-    }
-  }
-
-  private async supersedeBackendMemory(
+  private async coverBackendMemory(
     preferenceId: string,
     payload: BackendPreferenceMemoryPayload
   ): Promise<{ previousId: string; next: UserProfileMemoryRecord } | null> {
     try {
       const response = await axios.post(
-        `${this.getBackendInternalUrl()}/internal/user-profiles/preference-memories/${preferenceId}/supersede`,
+        `${this.getBackendInternalUrl()}/internal/user-profiles/preference-memories/${preferenceId}/cover`,
         payload,
         {
           headers: this.getBackendHeaders(),
@@ -542,10 +447,7 @@ export class UserProfileMemoryService {
 
       return { previousId, next };
     } catch (error: any) {
-      console.error(
-        '[ProfileMemory] Supersede backend memory error:',
-        error?.message
-      );
+      console.error('[ProfileMemory] Cover backend memory error:', error?.message);
       return null;
     }
   }
@@ -601,7 +503,6 @@ export class UserProfileMemoryService {
       strengthScore: Number(memory.strengthScore || DEFAULT_STRENGTH_SCORE),
       createdAt: memory.createdAt,
       updatedAt: memory.updatedAt,
-      lastActivatedAt: memory.lastActivatedAt,
     };
   }
 
@@ -642,9 +543,8 @@ export class UserProfileMemoryService {
       strengthScore: Number(data.strengthScore || DEFAULT_STRENGTH_SCORE),
       createdAt: String(data.createdAt || ''),
       updatedAt: String(data.updatedAt || ''),
-      lastActivatedAt: String(
-        data.lastActivatedAt || data.updatedAt || data.createdAt || ''
-      ),
+      isActive:
+        data.isActive === undefined ? true : Boolean(Number(data.isActive)),
     };
   }
 
@@ -663,10 +563,7 @@ export class UserProfileMemoryService {
       );
     }
 
-    if (
-      this.isSameSemanticCore(candidate, existing) &&
-      !this.hasChangeMarker(candidate)
-    ) {
+    if (this.isSameSemanticCore(candidate, existing)) {
       return Math.min(
         MAX_STRENGTH_SCORE,
         Number(
@@ -686,19 +583,21 @@ export class UserProfileMemoryService {
   ): PreferenceMemoryDecision[] {
     return params.flatMap<PreferenceMemoryDecision>(
       ({ candidate, existingMemories }) => {
-        const decision = this.decideAction(candidate, existingMemories);
-        if (decision.action === 'discard') {
+        const action = this.decideAction(candidate, existingMemories);
+        if (action === 'discard') {
           return [];
         }
 
-        if (
-          (decision.action === 'update' || decision.action === 'supersede') &&
-          decision.existing
-        ) {
+        if (action === 'cover') {
+          const sourceMemoryId = existingMemories[0]?.id || null;
+          if (!sourceMemoryId) {
+            return [];
+          }
+
           return [
             {
               candidateId: candidate.candidateId,
-              sourceMemoryId: decision.existing.id,
+              sourceMemoryId,
               action: 'cover',
             },
           ];
@@ -809,11 +708,6 @@ ${JSON.stringify(promptOldMemories, null, 2)}`;
 
   private getPreferenceReconcileSystemPrompt(): string {
     return `你是用户偏好记忆对账器。你的任务是根据当前 batch 的新消息、候选偏好和已有偏好记忆，输出最小化保留决策。
-
-目标：
-- 只保留当前有效且值得长期记住的偏好
-- 能覆盖旧记忆时优先 cover，不要轻易 new
-- 同一语义核心只保留一个当前版本
 
 规则：
 1. action 只能是 new 或 cover
