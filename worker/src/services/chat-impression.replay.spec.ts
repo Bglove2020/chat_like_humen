@@ -15,11 +15,9 @@ interface StoredVectorPoint {
 interface StoredLine {
   id: string;
   openId: string;
-  sessionId: string | null;
   anchorLabel: string;
   impressionLabel: string;
   impressionAbstract: string;
-  impressionVersion: number;
   salienceScore: number;
   lastActivatedAt: string;
   createdAt: string;
@@ -251,11 +249,9 @@ class InMemoryBackend {
       const line: StoredLine = {
         id: `line-${this.lineSeq++}`,
         openId: body.openId,
-        sessionId: body.sessionId ?? null,
         anchorLabel: body.anchorLabel,
         impressionLabel: body.impressionLabel || body.anchorLabel,
         impressionAbstract: body.impressionAbstract || '',
-        impressionVersion: 1,
         salienceScore: body.salienceScore || 1,
         lastActivatedAt: body.lastActivatedAt || now,
         createdAt: now,
@@ -309,7 +305,6 @@ class InMemoryBackend {
       const now = this.nextIso();
       line.impressionLabel = body.impressionLabel;
       line.impressionAbstract = body.impressionAbstract;
-      line.impressionVersion += 1;
       line.salienceScore = body.salienceScore ?? line.salienceScore;
       line.lastActivatedAt = body.lastActivatedAt || now;
       line.updatedAt = now;

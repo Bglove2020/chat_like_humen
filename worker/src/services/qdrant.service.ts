@@ -29,8 +29,6 @@ export interface SummaryJobData {
 
 interface BackendLineRecord extends MemoryLineCandidate {
   openId?: string;
-  sessionId?: string | null;
-  impressionVersion?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -76,7 +74,6 @@ interface QdrantLeafPayload {
   anchorLabel: string;
   impressionLabel: string;
   impressionAbstract: string;
-  impressionVersion: number;
   lineSalienceScore: number;
   lineLastActivatedAt: string;
   lineCreatedAt: string;
@@ -281,7 +278,6 @@ export class QdrantService {
       anchorLabel: line.anchorLabel,
       impressionLabel: line.impressionLabel || line.anchorLabel,
       impressionAbstract: line.impressionAbstract || '',
-      impressionVersion: Number(line.impressionVersion || 1),
       lineSalienceScore: Number(line.salienceScore || INITIAL_SALIENCE_SCORE),
       lineLastActivatedAt: line.lastActivatedAt || line.updatedAt || line.createdAt || new Date().toISOString(),
       lineCreatedAt: line.createdAt || new Date().toISOString(),
@@ -371,14 +367,12 @@ export class QdrantService {
 
   private async createLine(params: {
     openId: string;
-    sessionId?: string;
     anchorLabel: string;
   }): Promise<BackendLineRecord> {
     const response = await axios.post(
       `${this.getBackendInternalUrl()}/internal/memory/lines`,
       {
         openId: params.openId,
-        sessionId: params.sessionId || null,
         anchorLabel: params.anchorLabel,
         impressionLabel: params.anchorLabel,
         impressionAbstract: '',
@@ -648,16 +642,15 @@ export class QdrantService {
         continue;
       }
 
-      await this.patchLeafPointPayloads(
-        leafPoints.map((point) => point.id),
-        {
-          anchorLabel: nextLine.anchorLabel,
-          impressionLabel: nextLine.impressionLabel,
-          impressionAbstract: nextLine.impressionAbstract,
-          impressionVersion: Number(nextLine.impressionVersion || 1),
-          lineSalienceScore: Number(nextLine.salienceScore || INITIAL_SALIENCE_SCORE),
-          lineLastActivatedAt: nextLine.lastActivatedAt || new Date().toISOString(),
-          lineCreatedAt: nextLine.createdAt || new Date().toISOString(),
+        await this.patchLeafPointPayloads(
+          leafPoints.map((point) => point.id),
+          {
+            anchorLabel: nextLine.anchorLabel,
+            impressionLabel: nextLine.impressionLabel,
+            impressionAbstract: nextLine.impressionAbstract,
+            lineSalienceScore: Number(nextLine.salienceScore || INITIAL_SALIENCE_SCORE),
+            lineLastActivatedAt: nextLine.lastActivatedAt || new Date().toISOString(),
+            lineCreatedAt: nextLine.createdAt || new Date().toISOString(),
           lineUpdatedAt: nextLine.updatedAt || new Date().toISOString(),
         },
       );
@@ -769,10 +762,7 @@ export class QdrantService {
           (candidate) => candidate.id === result.route.targetLineId,
         );
         line = matched
-          ? {
-              ...matched,
-              impressionVersion: 1,
-            }
+          ? { ...matched }
           : (await this.getLinesByIds([result.route.targetLineId]))[0];
         if (line) {
           lineCache.set(line.id, line);
@@ -814,7 +804,6 @@ export class QdrantService {
     for (const group of newLinePlan.newLines) {
       const line = await this.createLine({
         openId: params.openId,
-        sessionId: params.sessionId,
         anchorLabel: group.anchorLabel,
       });
 
