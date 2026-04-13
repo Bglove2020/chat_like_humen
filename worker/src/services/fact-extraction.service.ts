@@ -22,9 +22,7 @@ export interface PreferenceMemoryCandidate {
   type: ProfileMemoryType;
   content: string;
   keywords: string[];
-  confidence: number;
   evidenceMessageIds: number[];
-  retrievalText: string;
 }
 
 export interface FactExtractionResult {
@@ -271,15 +269,6 @@ function normalizeText(value: unknown, maxLength: number): string {
   return String(value).replace(/\s+/g, ' ').trim().substring(0, maxLength);
 }
 
-function normalizeConfidence(value: unknown): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(1, Number(parsed.toFixed(3))));
-}
-
 function normalizeKeywords(value: unknown): string[] {
   const rawItems = Array.isArray(value)
     ? value
@@ -449,10 +438,6 @@ export class FactExtractionService {
       const type = MEMORY_TYPES.has(raw?.type) ? raw.type : 'preference';
       const content = normalizeText(raw?.content || raw?.preference, 200);
       const keywords = normalizeKeywords(raw?.keywords);
-      const confidence =
-        raw?.confidence === undefined
-          ? 0.8
-          : normalizeConfidence(raw?.confidence);
       const evidenceMessageIds = this.normalizeEvidenceMessageIds(
         raw?.evidenceMessageIds,
         allowedMessageIds,
@@ -461,18 +446,11 @@ export class FactExtractionService {
       if (
         !content ||
         !keywords.length ||
-        confidence < 0.55 ||
         !evidenceMessageIds.length ||
         this.looksLikeQuestionWithoutStableSignal(content)
       ) {
         continue;
       }
-
-      const retrievalText = this.buildRetrievalText({
-        type,
-        content,
-        keywords,
-      });
       const dedupeKey = [type, content, keywords.join('|')].join('|');
 
       if (seen.has(dedupeKey)) {
@@ -485,9 +463,7 @@ export class FactExtractionService {
         type,
         content,
         keywords,
-        confidence,
         evidenceMessageIds,
-        retrievalText,
       });
     }
 

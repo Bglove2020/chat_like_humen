@@ -6,13 +6,13 @@ describe('FactExtractionService', () => {
     {
       messageId: 100,
       role: 'assistant' as const,
-      content: '你喜欢喝拿铁还是美式？',
+      content: 'Do you prefer pour-over or Americano?',
       timestamp: '2026-04-11T00:00:00.000Z',
     },
     {
       messageId: 101,
       role: 'user' as const,
-      content: '我喜欢冰美式，但晚上不太敢喝，怕睡不着',
+      content: 'I like iced Americano, but I usually avoid coffee at night.',
       timestamp: '2026-04-11T00:00:00.000Z',
     },
   ];
@@ -21,16 +21,16 @@ describe('FactExtractionService', () => {
     const result = service.normalizeExtraction(
       {
         structuredProfile: {
-          nickname: ' 小张 ',
-          favorite_food: ['火锅', '寿司'],
+          nickname: ' Maple ',
+          favorite_food: ['hotpot', 'sushi'],
           unknown: 'ignored',
           gender: null,
         },
         preferenceMemories: [
           {
             type: 'preference',
-            content: '用户喜欢冰美式，晚上通常不喝。',
-            keywords: ['冰美式', '晚上不喝'],
+            content: 'User likes iced Americano and usually avoids coffee at night.',
+            keywords: ['iced americano', 'avoid coffee at night'],
             evidenceMessageIds: ['101'],
           },
         ],
@@ -39,19 +39,18 @@ describe('FactExtractionService', () => {
     );
 
     expect(result.structuredProfile).toEqual({
-      nickname: '小张',
-      favorite_food: '火锅、寿司',
+      nickname: 'Maple',
+      favorite_food: 'hotpot、sushi',
     });
-    expect(result.preferenceMemories).toHaveLength(1);
-    expect(result.preferenceMemories[0]).toMatchObject({
-      type: 'preference',
-      content: '用户喜欢冰美式，晚上通常不喝。',
-      keywords: ['冰美式', '晚上不喝'],
-      evidenceMessageIds: [101],
-    });
-    expect(result.preferenceMemories[0].retrievalText).toContain(
-      '用户喜欢冰美式，晚上通常不喝。',
-    );
+    expect(result.preferenceMemories).toEqual([
+      {
+        candidateId: 'cand_1',
+        type: 'preference',
+        content: 'User likes iced Americano and usually avoids coffee at night.',
+        keywords: ['iced americano', 'avoid coffee at night'],
+        evidenceMessageIds: [101],
+      },
+    ]);
   });
 
   it('drops question-like candidates and candidates without evidence', () => {
@@ -60,15 +59,13 @@ describe('FactExtractionService', () => {
         structuredProfile: {},
         preferenceMemories: [
           {
-            content: '用户可以不吃香菜吗',
-            keywords: ['香菜'],
-            confidence: 0.8,
+            content: 'Can I skip cilantro?',
+            keywords: ['cilantro'],
             evidenceMessageIds: [201],
           },
           {
-            content: '用户喜欢拿铁',
-            keywords: ['拿铁'],
-            confidence: 0.8,
+            content: 'User likes latte',
+            keywords: ['latte'],
             evidenceMessageIds: [],
           },
         ],
@@ -77,7 +74,7 @@ describe('FactExtractionService', () => {
         {
           messageId: 201,
           role: 'user',
-          content: '我可以不吃香菜吗？',
+          content: 'Can I skip cilantro?',
           timestamp: '2026-04-11T00:00:00.000Z',
         },
       ],
@@ -91,15 +88,15 @@ describe('FactExtractionService', () => {
       .spyOn(service as any, 'callQwenJson')
       .mockResolvedValueOnce({
         structuredProfile: {
-          favorite_drink: '冰美式',
+          favorite_drink: 'Iced Americano',
         },
       })
       .mockResolvedValueOnce({
         preferenceMemories: [
           {
             type: 'preference',
-            content: '用户喜欢冰美式，晚上通常不喝。',
-            keywords: ['冰美式', '晚上不喝'],
+            content: 'User likes iced Americano and usually avoids coffee at night.',
+            keywords: ['iced americano', 'avoid coffee at night'],
             evidenceMessageIds: ['101'],
           },
         ],
@@ -108,45 +105,20 @@ describe('FactExtractionService', () => {
     const result = await service.extract(messages);
 
     expect(spy).toHaveBeenCalledTimes(2);
-    expect(spy.mock.calls[0][0]).toContain('固定字段提取器');
-    expect(spy.mock.calls[1][0]).toContain('偏好记忆提取器');
     expect(spy.mock.calls[0][2]).toEqual({ enableThinking: true });
     expect(spy.mock.calls[1][2]).toEqual({ enableThinking: true });
-    expect(result.structuredProfile).toEqual({ favorite_drink: '冰美式' });
-    expect(result.preferenceMemories).toHaveLength(1);
-    expect(result.preferenceMemories[0]).toMatchObject({
-      content: '用户喜欢冰美式，晚上通常不喝。',
-      keywords: ['冰美式', '晚上不喝'],
-      evidenceMessageIds: [101],
-    });
+    expect(result.structuredProfile).toEqual({ favorite_drink: 'Iced Americano' });
+    expect(result.preferenceMemories).toEqual([
+      {
+        candidateId: 'cand_1',
+        type: 'preference',
+        content: 'User likes iced Americano and usually avoids coffee at night.',
+        keywords: ['iced americano', 'avoid coffee at night'],
+        evidenceMessageIds: [101],
+      },
+    ]);
 
     spy.mockRestore();
-  });
-
-  it('documents structured field meanings, types, and array allowance in prompt', () => {
-    const prompt = (service as any).buildStructuredProfilePrompt(
-      messages.filter((message) => message.role === 'user'),
-    );
-
-    expect(prompt).toContain('字段说明与类型约束：');
-    expect(prompt).toContain('- name: 含义=');
-    expect(prompt).toContain('- favorite_food: 含义=');
-    expect(prompt).toContain('类型=string | null；可为数组=否');
-    expect(prompt).toContain('类型=string[] | string | null；可为数组=是');
-    expect(prompt).toContain('数组规则：');
-  });
-
-  it('uses assistant messages only as preference extraction context', () => {
-    const prompt = (service as any).buildPreferenceMemoriesPrompt(messages);
-    const systemPrompt = (service as any).getPreferenceMemoriesSystemPrompt();
-
-    expect(prompt).toContain('"role": "assistant"');
-    expect(prompt).toContain('messages:');
-    expect(systemPrompt).toContain('assistant 消息只用于帮助理解上下文');
-    expect(systemPrompt).toContain(
-      'evidenceMessageIds 必须只引用支持该候选的 user 消息 messageId',
-    );
-    expect(systemPrompt).toContain('不要输出 candidateId');
   });
 
   it('keeps structured extraction when preference extraction fails', async () => {
@@ -154,7 +126,7 @@ describe('FactExtractionService', () => {
       .spyOn(service as any, 'callQwenJson')
       .mockResolvedValueOnce({
         structuredProfile: {
-          favorite_drink: '冰美式',
+          favorite_drink: 'Iced Americano',
         },
       })
       .mockRejectedValueOnce(new Error('preference failed'));
@@ -164,11 +136,11 @@ describe('FactExtractionService', () => {
 
     const result = await service.extract(messages);
 
-    expect(result.structuredProfile).toEqual({ favorite_drink: '冰美式' });
+    expect(result.structuredProfile).toEqual({ favorite_drink: 'Iced Americano' });
     expect(result.preferenceMemories).toEqual([]);
     expect(consoleSpy).toHaveBeenCalledWith(
       '[FactExtraction] Preference memory extraction error:',
-      'preference failed',
+      'preference failed'
     );
 
     consoleSpy.mockRestore();

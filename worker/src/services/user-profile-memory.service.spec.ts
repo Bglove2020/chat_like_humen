@@ -5,40 +5,32 @@ import {
 import { PreferenceMemoryCandidate } from './fact-extraction.service';
 
 function createCandidate(
-  overrides: Partial<PreferenceMemoryCandidate> = {},
+  overrides: Partial<PreferenceMemoryCandidate> = {}
 ): PreferenceMemoryCandidate {
   return {
     candidateId: 'cand_1',
     type: 'preference',
-    content: '用户喜欢喝冰美式',
-    keywords: ['冰美式', '咖啡'],
-    confidence: 0.9,
+    content: 'User likes iced Americano.',
+    keywords: ['americano', 'coffee'],
     evidenceMessageIds: [101],
-    retrievalText: '用户喜欢喝冰美式；类型：preference；关键词：冰美式、咖啡',
     ...overrides,
   };
 }
 
 function createMemory(
-  overrides: Partial<UserProfileMemoryRecord> = {},
+  overrides: Partial<UserProfileMemoryRecord> = {}
 ): UserProfileMemoryRecord {
   return {
     id: 'memory-1',
     score: 0.9,
     openId: 'open-id-1',
     type: 'preference',
-    content: '用户喜欢喝冰美式',
-    keywords: ['冰美式', '咖啡'],
-    confidence: 0.8,
+    content: 'User likes iced Americano.',
+    keywords: ['americano', 'coffee'],
     strengthScore: 2,
-    status: 'active',
-    sourceMessageIds: [1],
-    batchId: 'batch-0',
-    retrievalText: '用户喜欢喝冰美式',
     createdAt: '2026-04-10T00:00:00.000Z',
     updatedAt: '2026-04-10T00:00:00.000Z',
     lastActivatedAt: '2026-04-10T00:00:00.000Z',
-    supersededById: null,
     ...overrides,
   };
 }
@@ -46,7 +38,7 @@ function createMemory(
 describe('UserProfileMemoryService reconcile decisions', () => {
   const service = new UserProfileMemoryService(
     { get: jest.fn() } as any,
-    { getEmbedding: jest.fn() } as any,
+    { getEmbedding: jest.fn() } as any
   );
 
   it('discards duplicate same-subject memories', () => {
@@ -60,10 +52,10 @@ describe('UserProfileMemoryService reconcile decisions', () => {
   it('updates same-subject memories when the new candidate adds detail', () => {
     const decision = (service as any).decideAction(
       createCandidate({
-        content: '用户喜欢喝冰美式，通常会选少冰不加糖',
-        keywords: ['冰美式', '少冰', '不加糖'],
+        content: 'User likes iced Americano and usually asks for less ice.',
+        keywords: ['americano', 'coffee', 'less ice'],
       }),
-      [createMemory()],
+      [createMemory()]
     );
 
     expect(decision.action).toBe('update');
@@ -72,10 +64,10 @@ describe('UserProfileMemoryService reconcile decisions', () => {
   it('supersedes active memories when the same subject conflicts', () => {
     const decision = (service as any).decideAction(
       createCandidate({
-        content: '用户现在不太喝冰美式了，改喝拿铁',
-        keywords: ['冰美式', '拿铁'],
+        content: 'User does not drink iced Americano anymore and now prefers latte.',
+        keywords: ['americano', 'coffee', 'latte'],
       }),
-      [createMemory()],
+      [createMemory()]
     );
 
     expect(decision.action).toBe('supersede');
@@ -106,11 +98,11 @@ describe('UserProfileMemoryService reconcile decisions', () => {
         createCandidate(),
         createCandidate({
           candidateId: 'cand_2',
-          content: '用户更喜欢拿铁',
-          keywords: ['拿铁', '咖啡'],
+          content: 'User prefers latte now.',
+          keywords: ['latte', 'coffee'],
         }),
       ],
-      [createMemory()],
+      [createMemory()]
     );
 
     expect(decisions).toEqual([
@@ -128,29 +120,30 @@ describe('UserProfileMemoryService reconcile decisions', () => {
   });
 
   it('increases strength score when the same preference is confirmed again', () => {
-    const payload = (service as any).buildPayload({
-      openId: 'open-id-1',
-      batchId: 'batch-1',
-      candidate: createCandidate(),
-      existing: createMemory({ strengthScore: 2 }),
-      now: '2026-04-12T00:00:00.000Z',
-    });
+    const score = (service as any).computeStrengthScore(
+      createCandidate(),
+      createMemory({ strengthScore: 2 })
+    );
 
-    expect(payload.strengthScore).toBe(3);
+    expect(score).toBe(3);
   });
 
-  it('resets strength score when a covered preference changes materially', () => {
-    const payload = (service as any).buildPayload({
-      openId: 'open-id-1',
-      batchId: 'batch-1',
-      candidate: createCandidate({
-        content: '用户现在不太喝冰美式了，改喝拿铁',
-        keywords: ['冰美式', '拿铁'],
-      }),
-      existing: createMemory({ strengthScore: 4 }),
-      now: '2026-04-12T00:00:00.000Z',
-    });
+  it('builds qdrant payload without legacy fields', () => {
+    const payload = (service as any).buildPayload(createMemory());
 
-    expect(payload.strengthScore).toBe(1);
+    expect(payload).toEqual({
+      openId: 'open-id-1',
+      type: 'preference',
+      content: 'User likes iced Americano.',
+      keywords: ['americano', 'coffee'],
+      strengthScore: 2,
+      createdAt: '2026-04-10T00:00:00.000Z',
+      updatedAt: '2026-04-10T00:00:00.000Z',
+      lastActivatedAt: '2026-04-10T00:00:00.000Z',
+    });
+    expect((payload as any).status).toBeUndefined();
+    expect((payload as any).retrievalText).toBeUndefined();
+    expect((payload as any).sourceMessageIds).toBeUndefined();
+    expect((payload as any).batchId).toBeUndefined();
   });
 });

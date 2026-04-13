@@ -51,16 +51,11 @@ export class FactProcessor extends WorkerHost {
     const fixedFieldCount = Object.keys(extraction.structuredProfile).length;
 
     if (fixedFieldCount > 0) {
-      await this.upsertStructuredProfile(
-        openId,
-        batchId,
-        extraction.structuredProfile,
-      );
+      await this.upsertStructuredProfile(openId, extraction.structuredProfile);
     }
 
     const memoryStats = await this.userProfileMemoryService.reconcileAndPersist(
       openId,
-      batchId,
       messages,
       extraction.preferenceMemories,
     );
@@ -74,7 +69,6 @@ export class FactProcessor extends WorkerHost {
 
   private async upsertStructuredProfile(
     openId: string,
-    batchId: string,
     fields: Record<string, string>,
   ): Promise<void> {
     const backendInternalUrl = this.configService.get<string>(
@@ -88,7 +82,6 @@ export class FactProcessor extends WorkerHost {
       `${backendInternalUrl}/internal/user-profiles/upsert`,
       {
         openId,
-        batchId,
         fields,
       },
       {

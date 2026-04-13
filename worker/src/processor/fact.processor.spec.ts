@@ -25,9 +25,7 @@ describe('FactProcessor', () => {
             type: 'preference',
             content: 'User likes pour-over coffee.',
             keywords: ['coffee', 'pour-over'],
-            confidence: 0.88,
             evidenceMessageIds: [11],
-            retrievalText: 'User likes pour-over coffee.',
           },
         ],
       }),
@@ -83,7 +81,6 @@ describe('FactProcessor', () => {
       'http://backend.test:7001/internal/user-profiles/upsert',
       {
         openId: 'open-id-1',
-        batchId: 'batch-1',
         fields: {
           nickname: 'Maple',
           favorite_music: 'jazz',
@@ -97,7 +94,6 @@ describe('FactProcessor', () => {
     );
     expect(userProfileMemoryService.reconcileAndPersist).toHaveBeenCalledWith(
       'open-id-1',
-      'batch-1',
       [
         {
           messageId: 11,
@@ -118,9 +114,7 @@ describe('FactProcessor', () => {
           type: 'preference',
           content: 'User likes pour-over coffee.',
           keywords: ['coffee', 'pour-over'],
-          confidence: 0.88,
           evidenceMessageIds: [11],
-          retrievalText: 'User likes pour-over coffee.',
         },
       ]
     );
