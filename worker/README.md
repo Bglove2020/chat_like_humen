@@ -1,37 +1,34 @@
 # Worker
 
-独立的 NestJS Worker，负责：
+NestJS worker for memory summary and fact/profile extraction.
 
-- 消费 `chat-summary-queue`
-- 对同一用户任务加 Redis 锁串行处理
-- 调用 DashScope Qwen 生成会话印象
-- 将印象 embedding 后写入 Qdrant
+## What It Needs
 
-## 启动
+- `common_core` internal API
+- Redis for BullMQ
+- shared Qdrant
+- DashScope API key
+
+Worker does not connect to MySQL directly.
+
+## Environments
+
+- Test: use `.env.development`
+- Production: use `.env.production`
+
+Qdrant is shared by both environments:
+
+- test collections: `user_impressions_dev`, `user_profile_memories_dev`
+- production collections: `user_impressions`, `user_profile_memories`
+
+## Start
 
 ```bash
 npm install
-npm run start:dev
-```
-
-## 构建
-
-```bash
 npm run build
+npm run start:test
+npm run start:prod
 ```
 
-## 关键模块
-
-- `src/processor/summary.processor.ts`: BullMQ 消费与用户级锁
-- `src/services/dashscope.service.ts`: Qwen 与 embedding 调用
-- `src/services/qdrant.service.ts`: 印象查询、创建、更新
-
-## 必须保持的行为
-
-- 后端的 flush 规则不变：`10 条消息` 或 `2 分钟`
-- Worker 继续消费批量消息并生成印象摘要
-- 摘要结果必须写入 Qdrant
-
-## 环境变量
-
-复制 `worker/.env.example` 到 `worker/.env` 后按需修改。
+If worker and `common_core` are not on the same machine, update `BACKEND_INTERNAL_URL`.
+If Qdrant is not local to the worker host, update `QDRANT_URL` in both env files.

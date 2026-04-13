@@ -1,7 +1,12 @@
+const nodeEnv = process.env.NODE_ENV || 'development';
+const isProduction = nodeEnv === 'production';
+
 export default () => ({
   backend: {
-    internalUrl: process.env.BACKEND_INTERNAL_URL || 'http://127.0.0.1:7001',
-    internalApiKey: process.env.BACKEND_INTERNAL_API_KEY || '1234567890',
+    internalUrl: process.env.BACKEND_INTERNAL_URL || 'http://127.0.0.1:9001',
+    internalApiKey:
+      process.env.BACKEND_INTERNAL_API_KEY ||
+      (isProduction ? 'KNKccck!dN23Nkdd' : '1234567890'),
   },
 
   redis: {
@@ -11,9 +16,15 @@ export default () => ({
   },
 
   qdrant: {
-    url: process.env.QDRANT_URL || 'http://localhost:6333',
-    collectionName: process.env.QDRANT_COLLECTION_NAME || 'user_impressions',
-    profileCollectionName: process.env.QDRANT_PROFILE_COLLECTION_NAME || 'user_profile_memories',
+    url: process.env.QDRANT_URL || 'http://127.0.0.1:6333',
+    collectionName:
+      process.env.QDRANT_COLLECTION_NAME ||
+      (isProduction ? 'user_impressions' : 'user_impressions_dev'),
+    profileCollectionName:
+      process.env.QDRANT_PROFILE_COLLECTION_NAME ||
+      (isProduction
+        ? 'user_profile_memories'
+        : 'user_profile_memories_dev'),
   },
 
   dashscope: {
